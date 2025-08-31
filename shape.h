@@ -211,13 +211,6 @@ public:
     
     void draw();
     
-    // File operations
-    void saveToFile(const std::string& filename);
-    void loadFromFile(const std::string& filename);
-    
-    // Get model centroid
-    glm::vec3 getModelCentroid() const;
-    
     // Model transformations (for inspection mode)
     void rotateModel(char axis, bool positive);
 };
