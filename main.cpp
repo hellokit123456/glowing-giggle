@@ -306,20 +306,6 @@ public:
         glBindVertexArray(0);
     }
 };
-// Model class using hierarchical nodes
-// Mirror node used for UI / scene listing (non-owning pointer to HNode)
-struct model_node_t {
-    int id = -1;
-    ShapeType type = SPHERE_SHAPE;
-    glm::mat4 translation = glm::mat4(1.0f);
-    glm::mat4 rotation = glm::mat4(1.0f);
-    glm::mat4 scale = glm::mat4(1.0f);
-    glm::vec4 color = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
-
-    std::weak_ptr<model_node_t> parent;                      // for UI tree traversal
-    std::vector<std::shared_ptr<model_node_t>> children;     // UI children
-    HNode* hnode_ptr = nullptr;                              // non-owning pointer to the corresponding HNode
-};
 
 // Hierarchical model container (replacement)
 class model_t {
@@ -1074,4 +1060,5 @@ if (glewInit() != GLEW_OK) {
     glfwTerminate();
     return 0;
 }
+
 
