@@ -145,40 +145,49 @@ public:
     void scale(char axis, bool positive) override;
 };
 
-// Model Node for hierarchical structure
-class model_node_t {
+// Model Node for hierarchical structureclass model_node_t : public std::enable_shared_from_this<model_node_t> {
 public:
-    std::shared_ptr<shape_t> shape;
+    int id = -1;
+    ShapeType type = SPHERE_SHAPE;
+    glm::mat4 translation;
     glm::mat4 rotation;
     glm::mat4 scale;
-    glm::mat4 translation;
-    
-    std::vector<std::shared_ptr<model_node_t>> children;
-    std::shared_ptr<model_node_t> parent;
-    
+    glm::vec4 color = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
+
+    std::weak_ptr<model_node_t> parent;                      // for UI tree traversal
+    std::vector<std::shared_ptr<model_node_t>> children;     // UI children
+    HNode* hnode_ptr = nullptr;                              // non-owning pointer to the corresponding HNode
+
+    // optional: pointer to Shape geometry (if you need centroid/mesh access)
+    std::shared_ptr<Shape> shape; 
+
+    // Constructor
     model_node_t() {
         rotation = glm::mat4(1.0f);
         scale = glm::mat4(1.0f);
         translation = glm::mat4(1.0f);
-        parent = nullptr;
     }
-    
+
+    // Local transform
     glm::mat4 getTransform() const {
         return translation * rotation * scale;
     }
-    
+
+    // Global transform (recursively up the tree)
     glm::mat4 getGlobalTransform() const {
-        if (parent) {
-            return parent->getGlobalTransform() * getTransform();
+        if (auto p = parent.lock()) {
+            return p->getGlobalTransform() * getTransform();
         }
         return getTransform();
     }
-    
+
+    // Add child to hierarchy
     void addChild(std::shared_ptr<model_node_t> child) {
         child->parent = shared_from_this();
         children.push_back(child);
     }
-    
+
+    // Compute world-space centroid
     glm::vec3 getCentroid() const {
         if (shape) {
             glm::vec4 centroid = getGlobalTransform() * glm::vec4(shape->getCentroid(), 1.0f);
