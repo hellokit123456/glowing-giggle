@@ -66,17 +66,19 @@ public:
     glm::mat4 scale;
     std::vector<std::unique_ptr<HNode>> children;
 
-    HNode(std::unique_ptr<shape_t> s) : shape(std::move(s)) {
+    HNode* parent;  // <--- back-pointer
+
+    HNode(std::unique_ptr<shape_t> s, HNode* p = nullptr)
+        : shape(std::move(s)), parent(p) 
+    {
         rotation = glm::mat4(1.0f);
         translation = glm::mat4(1.0f);
         scale = glm::mat4(1.0f);
     }
 
-    // parentTransform is the accumulated transform from ancestors
     void render(const glm::mat4& parentTransform = glm::mat4(1.0f)) {
         glm::mat4 modelMatrix = parentTransform * translation * rotation * scale;
 
-        // Set the per-node "model" uniform (view & projection should be set once per-frame)
         GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
         if (modelLoc != -1) {
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
@@ -92,9 +94,22 @@ public:
     }
 
     void addChild(std::unique_ptr<HNode> child) {
+        child->parent = this;              // set back-reference
         children.push_back(std::move(child));
     }
+
+    glm::mat4 getLocalTransform() const {
+        return translation * rotation * scale;
+    }
+
+    glm::mat4 getGlobalTransform() const {
+        if (parent) {
+            return parent->getGlobalTransform() * getLocalTransform();
+        }
+        return getLocalTransform();
+    }
 };
+
 //Sphere implementation
 class sphere_t : public shape_t {
 public:
@@ -1047,8 +1062,8 @@ void renderScene() {
                        glm::vec3(0, 0, 0),  // look at origin
                        glm::vec3(0, 1, 0)); // up
 
-    if (currentModel && currentModel->root) {
-        renderNode(currentModel->root.get(), glm::mat4(1.0f));
+    if (currentModel && currentmodel->root_ui) {
+        renderNode(currentmodel->root_ui.get(), glm::mat4(1.0f));
     }
 }
 
@@ -1121,6 +1136,7 @@ if (glewInit() != GLEW_OK) {
     glfwTerminate();
     return 0;
 }
+
 
 
 
