@@ -95,6 +95,66 @@ public:
         children.push_back(std::move(child));
     }
 };
+//Sphere implementation
+class sphere_t : public shape_t {
+public:
+    sphere_t(unsigned int tesselation_level) : shape_t(tesselation_level) {
+        shapetype = SPHERE_SHAPE;
+        generateGeometry();
+        setupBuffers();
+    }
+
+    void generateGeometry() {
+        vertices.clear();
+        colors.clear();
+        indices.clear();
+
+        int stacks = 6 + level * 3;   // vertical divisions
+        int slices = 6 + level * 3;   // horizontal divisions
+
+        // Generate vertices
+        for (int i = 0; i <= stacks; ++i) {
+            float v = (float)i / stacks;
+            float phi = v * M_PI; // latitude [0, π]
+
+            for (int j = 0; j <= slices; ++j) {
+                float u = (float)j / slices;
+                float theta = u * 2.0f * M_PI; // longitude [0, 2π]
+
+                float x = sin(phi) * cos(theta);
+                float y = cos(phi);
+                float z = sin(phi) * sin(theta);
+
+                vertices.emplace_back(x * 0.5f, y * 0.5f, z * 0.5f, 1.0f); // radius = 0.5
+                colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+            }
+        }
+
+        // Generate indices
+        for (int i = 0; i < stacks; ++i) {
+            for (int j = 0; j < slices; ++j) {
+                int first = i * (slices + 1) + j;
+                int second = first + slices + 1;
+
+                indices.push_back(first);
+                indices.push_back(second);
+                indices.push_back(first + 1);
+
+                indices.push_back(second);
+                indices.push_back(second + 1);
+                indices.push_back(first + 1);
+            }
+        }
+    }
+
+    void draw() override {
+        if (VAO == 0) setupBuffers();
+        glBindVertexArray(VAO);
+        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    }
+};
+
 
 
 // Cylinder implementation
@@ -1061,6 +1121,7 @@ if (glewInit() != GLEW_OK) {
     glfwTerminate();
     return 0;
 }
+
 
 
 
