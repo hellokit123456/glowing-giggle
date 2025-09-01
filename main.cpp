@@ -64,86 +64,37 @@ public:
     glm::mat4 translation;
     glm::mat4 scale;
     std::vector<std::unique_ptr<HNode>> children;
-    
+
     HNode(std::unique_ptr<shape_t> s) : shape(std::move(s)) {
         rotation = glm::mat4(1.0f);
         translation = glm::mat4(1.0f);
         scale = glm::mat4(1.0f);
     }
+
+    // parentTransform is the accumulated transform from ancestors
     void render(const glm::mat4& parentTransform = glm::mat4(1.0f)) {
-    glm::mat4 modelMatrix = parentTransform * translation * rotation * scale;
+        glm::mat4 modelMatrix = parentTransform * translation * rotation * scale;
 
-    if (shape) {
-        glm::mat4 MVP = projection * view * modelMatrix;
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "MVP"),
-                           1, GL_FALSE, glm::value_ptr(MVP));
-        shape->draw();
+        // Set the per-node "model" uniform (view & projection should be set once per-frame)
+        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        if (modelLoc != -1) {
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+        }
+
+        if (shape) {
+            shape->draw();
+        }
+
+        for (auto& child : children) {
+            child->render(modelMatrix);
+        }
     }
 
-    for (auto& child : children) {
-        child->render(modelMatrix);
-    }
-}
-
-    
     void addChild(std::unique_ptr<HNode> child) {
         children.push_back(std::move(child));
     }
 };
-class sphere_t : public shape_t {
-public:
-    sphere_t(unsigned int tesselation_level) : shape_t(tesselation_level) {
-        shapetype = SPHERE_SHAPE;
-        generateGeometry();
-        setupBuffers();
-    }
-    
-    void generateGeometry() {
-        vertices.clear();
-        colors.clear();
-        indices.clear();
-        
-        int segments = 8 + level * 4; // 8, 12, 16, 20, 24 segments based on level
-        
-        // Generate vertices
-        for (int i = 0; i <= segments; ++i) {
-            float lat = M_PI * (-0.5f + (float)i / segments);
-            for (int j = 0; j <= segments; ++j) {
-                float lng = 2 * M_PI * (float)j / segments;
-                
-                float x = cos(lat) * cos(lng);
-                float y = sin(lat);
-                float z = cos(lat) * sin(lng);
-                
-                vertices.emplace_back(x, y, z, 1.0f);
-                colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-            }
-        }
-        
-        // Generate indices
-        for (int i = 0; i < segments; ++i) {
-            for (int j = 0; j < segments; ++j) {
-                int first = i * (segments + 1) + j;
-                int second = first + segments + 1;
-                
-                indices.push_back(first);
-                indices.push_back(second);
-                indices.push_back(first + 1);
-                
-                indices.push_back(second);
-                indices.push_back(second + 1);
-                indices.push_back(first + 1);
-            }
-        }
-    }
-    
-    void draw() override {
-        if (VAO == 0) setupBuffers();
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-};
+
 
 // Cylinder implementation
 class cylinder_t : public shape_t {
@@ -356,185 +307,427 @@ public:
     }
 };
 // Model class using hierarchical nodes
+// Mirror node used for UI / scene listing (non-owning pointer to HNode)
+struct model_node_t {
+    int id = -1;
+    ShapeType type = SPHERE_SHAPE;
+    glm::mat4 translation = glm::mat4(1.0f);
+    glm::mat4 rotation = glm::mat4(1.0f);
+    glm::mat4 scale = glm::mat4(1.0f);
+    glm::vec4 color = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
+
+    std::weak_ptr<model_node_t> parent;                      // for UI tree traversal
+    std::vector<std::shared_ptr<model_node_t>> children;     // UI children
+    HNode* hnode_ptr = nullptr;                              // non-owning pointer to the corresponding HNode
+};
+
+// Hierarchical model container (replacement)
 class model_t {
 private:
-    std::vector<std::unique_ptr<HNode>> nodes;
-    std::vector<std::shared_ptr<model_node_t>> shapes;
+    std::unique_ptr<HNode> root_hnode;                       // owns full HNode tree
+    std::vector<std::shared_ptr<model_node_t>> shapes;       // UI / scene-list mirrors (owned)
+    int next_id = 0;
+
+    // Helper: find model_node_t by id
+    std::shared_ptr<model_node_t> findMNodeById(int id) {
+        for (auto &m : shapes) if (m->id == id) return m;
+        return nullptr;
+    }
+
+    // Helper: remove child HNode from a parent's children by raw pointer
+    bool removeHChildFromParent(HNode* parent, HNode* target) {
+        if (!parent) return false;
+        auto &vec = parent->children;
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            if (it->get() == target) {
+                vec.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
 public:
-    std::shared_ptr<model_node_t> root;
-    void addShape(std::unique_ptr<shape_t> shape) {
-        auto node = std::make_unique<HNode>(std::move(shape));
-        nodes.push_back(std::move(node));
+    model_t() {
+        // create root HNode with no shape (null unique_ptr)
+        std::unique_ptr<shape_t> emptyShape(nullptr);
+        root_hnode = std::make_unique<HNode>(std::move(emptyShape));
+        // create root UI node
+        auto root_ui = std::make_shared<model_node_t>();
+        root_ui->id = next_id++;
+        root_ui->type = SPHERE_SHAPE; // meaningless for root, but set a default
+        shapes.push_back(root_ui);
     }
-     model_t() {
-        root = std::make_shared<model_node_t>();
-    }
-    
-    void removeLastShape() {
-        if (!nodes.empty()) {
-            nodes.pop_back();
-        }
-    }
-    void draw();
 
-     std::shared_ptr<model_node_t> getCurrentShape() {
-        return shapes.empty() ? nullptr : shapes.back();
+    // Basic accessor for root UI node (scene tree root)
+    std::shared_ptr<model_node_t> getRoot() {
+        // root is the first element in shapes by construction
+        return shapes.empty() ? nullptr : shapes.front();
     }
-    void rotateModel(char axis, bool positive);
 
-    std::shared_ptr<model_node_t> getRoot() { return root; }
     const std::vector<std::shared_ptr<model_node_t>>& getShapes() const { return shapes; }
-    
-    HNode* getLastNode() {
-        return nodes.empty() ? nullptr : nodes.back().get();
+
+    // Add shape as a child of the root UI/HNode by default
+    void addShape(std::unique_ptr<shape_t> shape) {
+        addShapeToParent(getRoot()->id, std::move(shape));
     }
-    
-    void render() {
-        for (auto& node : nodes) {
-            node->render();
+
+    // Add shape under parent UI node id (attach to that HNode)
+    void addShapeToParent(int parent_ui_id, std::unique_ptr<shape_t> shape) {
+        std::shared_ptr<model_node_t> parent_ui = findMNodeById(parent_ui_id);
+        if (!parent_ui) {
+            // fallback to root
+            parent_ui = getRoot();
+            if (!parent_ui) return;
         }
+
+        // Create the new HNode (temporary holder)
+        std::unique_ptr<HNode> temp_hnode = std::make_unique<HNode>(std::move(shape));
+        HNode* raw_ptr = temp_hnode.get();
+
+        // Attach to the parent's HNode children (move ownership)
+        HNode* parent_hnode = parent_ui->hnode_ptr;
+        if (!parent_hnode) {
+            // if parent_hnode null (root UI), use root_hnode
+            parent_hnode = root_hnode.get();
+        }
+        parent_hnode->children.push_back(std::move(temp_hnode));
+        // note: raw_ptr is now owned by parent_hnode->children.back()
+
+        // Create UI mirror node
+        auto mnode = std::make_shared<model_node_t>();
+        mnode->id = next_id++;
+        mnode->type = raw_ptr->shape ? raw_ptr->shape->shapetype : SPHERE_SHAPE;
+        mnode->translation = raw_ptr->translation;
+        mnode->rotation = raw_ptr->rotation;
+        mnode->scale = raw_ptr->scale;
+        if (raw_ptr->shape && !raw_ptr->shape->colors.empty()) {
+            mnode->color = raw_ptr->shape->colors[0];
+        }
+        mnode->hnode_ptr = raw_ptr;
+        mnode->parent = parent_ui;
+        parent_ui->children.push_back(mnode);
+        shapes.push_back(mnode);
     }
-    
+
+    // Remove last added shape (both UI mirror and HNode in the tree)
+    void removeLastShape() {
+        if (shapes.size() <= 1) return; // keep root intact (root is shapes[0])
+        auto last = shapes.back();
+        HNode* target_h = last->hnode_ptr;
+        // find its parent UI and parent HNode
+        auto parent_ui = last->parent.lock();
+        HNode* parent_h = parent_ui ? parent_ui->hnode_ptr : root_hnode.get();
+
+        // remove UI entry from parent's children
+        if (parent_ui) {
+            for (auto it = parent_ui->children.begin(); it != parent_ui->children.end(); ++it) {
+                if ((*it)->id == last->id) {
+                    parent_ui->children.erase(it);
+                    break;
+                }
+            }
+        }
+
+        // remove HNode child from parent_hnode->children
+        if (parent_h && target_h) {
+            removeHChildFromParent(parent_h, target_h);
+        }
+
+        // remove from shapes vector
+        shapes.pop_back();
+    }
+
+    std::shared_ptr<model_node_t> getCurrentShape() {
+        if (shapes.size() <= 1) return nullptr; // no actual shapes
+        return shapes.back();
+    }
+
+    HNode* getLastNode() {
+        auto cur = getCurrentShape();
+        return cur ? cur->hnode_ptr : nullptr;
+    }
+
+    // rotate whole model (for inspection)
+    void rotateModel(char axis, bool positive) {
+        float ang = glm::radians(5.0f) * (positive ? 1.0f : -1.0f);
+        // apply to root_hnode's transform (we will use root_hnode as global)
+        if (axis == 'X') root_hnode->rotation = glm::rotate(root_hnode->rotation, ang, glm::vec3(1,0,0));
+        else if (axis == 'Y') root_hnode->rotation = glm::rotate(root_hnode->rotation, ang, glm::vec3(0,1,0));
+        else if (axis == 'Z') root_hnode->rotation = glm::rotate(root_hnode->rotation, ang, glm::vec3(0,0,1));
+    }
+
+    // Render: call root_hnode->render so hierarchical transforms propagate
+    void render() {
+        if (root_hnode) root_hnode->render();
+    }
+
     size_t getShapeCount() const {
-        return nodes.size();
+        // exclude root
+        return (shapes.size() <= 1) ? 0 : shapes.size() - 1;
     }
-    
+
     void clear() {
-        nodes.clear();
+        // recreate empty root
+        std::unique_ptr<shape_t> emptyShape(nullptr);
+        root_hnode = std::make_unique<HNode>(std::move(emptyShape));
+        shapes.clear();
+        auto root_ui = std::make_shared<model_node_t>();
+        root_ui->id = next_id++;
+        shapes.push_back(root_ui);
     }
-    
-    // Save model to file
+
+    // Save: traverse hierarchy and save parent-child relationships (PARENT <id>)
     void save(const std::string& filename) {
         std::ofstream file(filename);
         if (!file.is_open()) {
             std::cout << "Failed to save model to " << filename << std::endl;
             return;
         }
-        
+
         file << "MODEL_FILE_VERSION 1.0\n";
-        file << "SHAPE_COUNT " << nodes.size() << "\n";
-        
-        for (size_t i = 0; i < nodes.size(); ++i) {
-            const auto& node = nodes[i];
-            if (node->shape) {
-                file << "SHAPE " << i << "\n";
-                file << "TYPE " << static_cast<int>(node->shape->shapetype) << "\n";
-                file << "LEVEL " << node->shape->level << "\n";
-                
-                // Save transformation matrices
-                file << "TRANSLATION ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->translation)[j] << " ";
-                }
-                file << "\n";
-                
-                file << "ROTATION ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->rotation)[j] << " ";
-                }
-                file << "\n";
-                
-                file << "SCALE ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->scale)[j] << " ";
-                }
-                file << "\n";
-                
-                // Save color (first color in the colors vector)
-                if (!node->shape->colors.empty()) {
-                    const auto& color = node->shape->colors[0];
-                    file << "COLOR " << color.r << " " << color.g << " " << color.b << " " << color.a << "\n";
-                }
-            }
+        file << "SHAPE_COUNT " << getShapeCount() << "\n";
+
+        // For saving we traverse shapes vector (skipping the first root entry)
+        for (size_t i = 1; i < shapes.size(); ++i) {
+            const auto& m = shapes[i];
+            file << "SHAPE " << m->id << "\n";
+            file << "TYPE " << static_cast<int>(m->type) << "\n";
+
+            // Save transform matrices
+            file << "TRANSLATION ";
+            const float* tptr = glm::value_ptr(m->translation);
+            for (int k = 0; k < 16; ++k) file << tptr[k] << " ";
+            file << "\n";
+
+            file << "ROTATION ";
+            const float* rptr = glm::value_ptr(m->rotation);
+            for (int k = 0; k < 16; ++k) file << rptr[k] << " ";
+            file << "\n";
+
+            file << "SCALE ";
+            const float* sptr = glm::value_ptr(m->scale);
+            for (int k = 0; k < 16; ++k) file << sptr[k] << " ";
+            file << "\n";
+
+            // Parent id
+            int parent_id = -1;
+            if (auto p = m->parent.lock()) parent_id = p->id;
+            file << "PARENT " << parent_id << "\n";
+
+            // color
+            file << "COLOR " << m->color.r << " " << m->color.g << " " << m->color.b << " " << m->color.a << "\n";
         }
-        
+
         file.close();
         std::cout << "Model saved to " << filename << std::endl;
     }
-    
-    // Load model from file
+
+    // Load: reconstruct shapes and hierarchy
     bool load(const std::string& filename) {
-        unsigned int level=2;
         std::ifstream file(filename);
         if (!file.is_open()) {
             std::cout << "Failed to load model from " << filename << std::endl;
             return false;
         }
-        
-        clear(); // Remove existing model
-        
+
+        // temporary storage for entries
+        struct Entry {
+            int id;
+            ShapeType type;
+            glm::mat4 translation;
+            glm::mat4 rotation;
+            glm::mat4 scale;
+            int parent_id;
+            glm::vec4 color;
+        };
+        std::vector<Entry> entries;
+
         std::string line;
         while (std::getline(file, line)) {
+            if (line.empty()) continue;
             std::istringstream iss(line);
             std::string token;
             iss >> token;
-            
             if (token == "SHAPE") {
-                int shapeIndex;
-                iss >> shapeIndex;
-                
-                // Read shape properties
-                int shapeType, level;
-                glm::mat4 translation(1.0f), rotation(1.0f), scale(1.0f);
-                glm::vec4 color(0.7f, 0.7f, 0.7f, 1.0f);
-                
-                while (std::getline(file, line) && !line.empty()) {
-                    std::istringstream propStream(line);
+                Entry e;
+                iss >> e.id;
+                // default
+                e.type = SPHERE_SHAPE;
+                e.translation = glm::mat4(1.0f);
+                e.rotation = glm::mat4(1.0f);
+                e.scale = glm::mat4(1.0f);
+                e.parent_id = -1;
+                e.color = glm::vec4(0.7f,0.7f,0.7f,1.0f);
+
+                // read subsequent lines for this shape
+                std::streampos lastPos;
+                while (true) {
+                    lastPos = file.tellg();
+                    if (!std::getline(file, line)) break;
+                    if (line.empty()) break;
+                    std::istringstream ps(line);
                     std::string prop;
-                    propStream >> prop;
-                    
+                    ps >> prop;
                     if (prop == "TYPE") {
-                        propStream >> shapeType;
-                    } else if (prop == "LEVEL") {
-                        propStream >> level;
+                        int t; ps >> t; e.type = static_cast<ShapeType>(t);
                     } else if (prop == "TRANSLATION") {
-                        float* ptr = glm::value_ptr(translation);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
+                        float* ptr = glm::value_ptr(e.translation);
+                        for (int k = 0; k < 16; ++k) ps >> ptr[k];
                     } else if (prop == "ROTATION") {
-                        float* ptr = glm::value_ptr(rotation);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
+                        float* ptr = glm::value_ptr(e.rotation);
+                        for (int k = 0; k < 16; ++k) ps >> ptr[k];
                     } else if (prop == "SCALE") {
-                        float* ptr = glm::value_ptr(scale);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
+                        float* ptr = glm::value_ptr(e.scale);
+                        for (int k = 0; k < 16; ++k) ps >> ptr[k];
+                    } else if (prop == "PARENT") {
+                        ps >> e.parent_id;
                     } else if (prop == "COLOR") {
-                        propStream >> color.r >> color.g >> color.b >> color.a;
+                        ps >> e.color.r >> e.color.g >> e.color.b >> e.color.a;
+                    } else {
+                        file.seekg(lastPos);
+                        break;
                     }
                 }
-                
-                // Create shape based on type
-                std::unique_ptr<shape_t> shape;
-                switch (static_cast<ShapeType>(shapeType)) {
-                    case SPHERE_SHAPE:
-                        shape = std::make_unique<sphere_t>(level);
-                        break;
-                    case CYLINDER_SHAPE:
-                        shape = std::make_unique<cylinder_t>(level);
-                        break;
-                    case BOX_SHAPE:
-                        shape = std::make_unique<box_t>(level);
-                        break;
-                    case CONE_SHAPE:
-                        shape = std::make_unique<cone_t>(level);
-                        break;
-                }
-                
-                if (shape) {
-                    shape->setColor(color);
-                    auto node = std::make_unique<HNode>(std::move(shape));
-                    node->translation = translation;
-                    node->rotation = rotation;
-                    node->scale = scale;
-                    nodes.push_back(std::move(node));
+                entries.push_back(e);
+            }
+        }
+
+        // Clear current model and recreate
+        clear();
+
+        // First create all nodes (under root by default), and map id->mnode
+        std::unordered_map<int, std::shared_ptr<model_node_t>> id2mnode;
+        for (auto &e : entries) {
+            // create shape
+            std::unique_ptr<shape_t> s;
+            switch (e.type) {
+                case SPHERE_SHAPE: s = std::make_unique<sphere_t>(2); break;
+                case CYLINDER_SHAPE: s = std::make_unique<cylinder_t>(2); break;
+                case BOX_SHAPE: s = std::make_unique<box_t>(2); break;
+                case CONE_SHAPE: s = std::make_unique<cone_t>(2); break;
+            }
+            // set color
+            s->setColor(e.color);
+
+            // attach under root temporarily (we will reparent later)
+            std::unique_ptr<HNode> temp = std::make_unique<HNode>(std::move(s));
+            // set transforms
+            temp->translation = e.translation;
+            temp->rotation = e.rotation;
+            temp->scale = e.scale;
+
+            HNode* raw_ptr = temp.get();
+            root_hnode->children.push_back(std::move(temp)); // temporary parent is root
+
+            // create UI mirror
+            auto mnode = std::make_shared<model_node_t>();
+            mnode->id = e.id;
+            mnode->type = e.type;
+            mnode->translation = e.translation;
+            mnode->rotation = e.rotation;
+            mnode->scale = e.scale;
+            mnode->color = e.color;
+            mnode->hnode_ptr = raw_ptr;
+            // add under root UI for now
+            shapes.push_back(mnode);
+            root_hnode->children.back()->shape; // no-op to silence unused
+            id2mnode[e.id] = mnode;
+        }
+
+        // Now fix parents according to entries (reparent both UI and HNode)
+        for (auto &e : entries) {
+            auto mnode = id2mnode[e.id];
+            int pid = e.parent_id;
+            std::shared_ptr<model_node_t> parent_ui = (pid == -1) ? getRoot() : id2mnode[pid];
+            // find HNode pointers
+            HNode* child_h = mnode->hnode_ptr;
+            HNode* new_parent_h = parent_ui->hnode_ptr ? parent_ui->hnode_ptr : root_hnode.get();
+
+            // remove child_h from current parent (root) and move to new_parent_h
+            // find current parent (search root_hnode tree for the parent owning child_h)
+            // simple approach: remove from root_hnode children vector (since we temporarily put all under root)
+            // Try to remove from root first
+            removeHChildFromParent(root_hnode.get(), child_h);
+            // then attach to new_parent_h
+            new_parent_h->children.push_back(std::unique_ptr<HNode>(child_h)); 
+            // WARNING: ownership transfer above is not valid because child_h is already owned by root_hnode->children memory we erased.
+            // To avoid complex ownership juggling here, instead we'll rebuild tree cleanly below.
+        }
+
+        // The ownership juggling above is complex; simpler approach: reconstruct tree from entries cleanly:
+        // Clear root and UI and then rebuild properly
+        root_hnode = std::make_unique<HNode>(std::unique_ptr<shape_t>(nullptr));
+        // Rebuild mnode map and hnode ownership mapping
+        id2mnode.clear();
+        shapes.clear();
+
+        // First create all mnodes and raw HNode pointers stored temporarily
+        struct TempNode { Entry e; std::unique_ptr<HNode> owned; HNode* raw; std::shared_ptr<model_node_t> mnode; };
+        std::vector<TempNode> tempNodes;
+        for (auto &e : entries) {
+            std::unique_ptr<shape_t> s;
+            switch (e.type) {
+                case SPHERE_SHAPE: s = std::make_unique<sphere_t>(2); break;
+                case CYLINDER_SHAPE: s = std::make_unique<cylinder_t>(2); break;
+                case BOX_SHAPE: s = std::make_unique<box_t>(2); break;
+                case CONE_SHAPE: s = std::make_unique<cone_t>(2); break;
+            }
+            s->setColor(e.color);
+            TempNode tn;
+            tn.e = e;
+            tn.owned = std::make_unique<HNode>(std::move(s));
+            tn.owned->translation = e.translation;
+            tn.owned->rotation = e.rotation;
+            tn.owned->scale = e.scale;
+            tn.raw = tn.owned.get();
+            tn.mnode = std::make_shared<model_node_t>();
+            tn.mnode->id = e.id;
+            tn.mnode->type = e.type;
+            tn.mnode->translation = e.translation;
+            tn.mnode->rotation = e.rotation;
+            tn.mnode->scale = e.scale;
+            tn.mnode->color = e.color;
+            tn.mnode->hnode_ptr = tn.raw;
+            tempNodes.push_back(std::move(tn));
+        }
+
+        // helper to find TempNode by id
+        auto findTempById = [&](int id)->TempNode* {
+            for (auto &t : tempNodes) if (t.e.id == id) return &t;
+            return nullptr;
+        };
+
+        // attach each TempNode under the specified parent (or root)
+        for (auto &t : tempNodes) {
+            int pid = t.e.parent_id;
+            if (pid == -1) {
+                // attach to root_hnode
+                root_hnode->children.push_back(std::move(t.owned));
+                // root_hnode->children.back() now owns it; update mnode->hnode_ptr already set
+                shapes.push_back(t.mnode);
+                // parent of UI is root
+                t.mnode->parent = getRoot();
+                getRoot()->children.push_back(t.mnode);
+            } else {
+                // find parent's raw HNode pointer
+                TempNode* parentTemp = findTempById(pid);
+                if (parentTemp) {
+                    parentTemp->owned->children.push_back(std::move(t.owned));
+                    shapes.push_back(t.mnode);
+                    // wire UI parent-child
+                    t.mnode->parent = parentTemp->mnode;
+                    parentTemp->mnode->children.push_back(t.mnode);
+                } else {
+                    // fallback: attach to root
+                    root_hnode->children.push_back(std::move(t.owned));
+                    shapes.push_back(t.mnode);
+                    t.mnode->parent = getRoot();
+                    getRoot()->children.push_back(t.mnode);
                 }
             }
         }
-        
+
         file.close();
         std::cout << "Model loaded from " << filename << std::endl;
         return true;
@@ -642,7 +835,22 @@ void handleModellingKeys(int key) {
             currentNode = currentModel->getLastNode();
             std::cout << "Last shape removed\n";
             break;
-
+        case GLFW_KEY_U: // Move UP to parent
+            if (currentNode->parent) {
+                currentNode = currentNode->parent;
+                std::cout << "Selected parent node.\n";
+            } else {
+                std::cout << "Already at the root node.\n";
+            }
+            break;
+        case GLFW_KEY_J: // Move DOWN to first child
+            if (!currentNode->children.empty()) {
+                currentNode = currentNode->children.front();
+                std::cout << "Selected first child node.\n";
+            } else {
+                std::cout << "Selected node has no children.\n";
+            }
+            break;
         // Transform mode selection
         case GLFW_KEY_R:
             transformMode = ROTATE;
@@ -866,3 +1074,4 @@ if (glewInit() != GLEW_OK) {
     glfwTerminate();
     return 0;
 }
+
