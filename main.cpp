@@ -9,10 +9,18 @@
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 enum ShapeType { SPHERE_SHAPE, CYLINDER_SHAPE, BOX_SHAPE, CONE_SHAPE };
 enum Mode { MODELLING, INSPECTION };
 enum TransformMode { NONE, ROTATE, TRANSLATE, SCALE };
+
+// Global shader program
+GLuint shaderProgram = 0;
 
 // Abstract base shape class
 class shape_t {
@@ -80,216 +88,6 @@ public:
     }
 };
 
-// Hierarchical Node class (based on Tutorial 7)
-class HNode {
-public:
-    std::unique_ptr<shape_t> shape;
-    glm::mat4 rotation;
-    glm::mat4 translation;
-    glm::mat4 scale;
-    std::vector<std::unique_ptr<HNode>> children;
-    
-    HNode(std::unique_ptr<shape_t> s) : shape(std::move(s)) {
-        rotation = glm::mat4(1.0f);
-        translation = glm::mat4(1.0f);
-        scale = glm::mat4(1.0f);
-    }
-    
-    void render(const glm::mat4& parentTransform = glm::mat4(1.0f)) {
-        glm::mat4 currentTransform = parentTransform * translation * rotation * scale;
-        
-        glPushMatrix();
-        glMultMatrixf(glm::value_ptr(currentTransform));
-        
-        if (shape) {
-            shape->draw();
-        }
-        
-        glPopMatrix();
-        
-        // Render children
-        for (auto& child : children) {
-            child->render(currentTransform);
-        }
-    }
-    
-    void addChild(std::unique_ptr<HNode> child) {
-        children.push_back(std::move(child));
-    }
-};
-
-// Model class using hierarchical nodes
-class model_t {
-private:
-    std::vector<std::unique_ptr<HNode>> nodes;
-    
-public:
-    void addShape(std::unique_ptr<shape_t> shape) {
-        auto node = std::make_unique<HNode>(std::move(shape));
-        nodes.push_back(std::move(node));
-    }
-    
-    void removeLastShape() {
-        if (!nodes.empty()) {
-            nodes.pop_back();
-        }
-    }
-    
-    HNode* getLastNode() {
-        return nodes.empty() ? nullptr : nodes.back().get();
-    }
-    
-    void render() {
-        for (auto& node : nodes) {
-            node->render();
-        }
-    }
-    
-    size_t getShapeCount() const {
-        return nodes.size();
-    }
-    
-    void clear() {
-        nodes.clear();
-    }
-    
-    // Save model to file
-    void save(const std::string& filename) {
-        std::ofstream file(filename);
-        if (!file.is_open()) {
-            std::cout << "Failed to save model to " << filename << std::endl;
-            return;
-        }
-        
-        file << "MODEL_FILE_VERSION 1.0\n";
-        file << "SHAPE_COUNT " << nodes.size() << "\n";
-        
-        for (size_t i = 0; i < nodes.size(); ++i) {
-            const auto& node = nodes[i];
-            if (node->shape) {
-                file << "SHAPE " << i << "\n";
-                file << "TYPE " << static_cast<int>(node->shape->shapetype) << "\n";
-                file << "LEVEL " << node->shape->level << "\n";
-                
-                // Save transformation matrices
-                file << "TRANSLATION ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->translation)[j] << " ";
-                }
-                file << "\n";
-                
-                file << "ROTATION ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->rotation)[j] << " ";
-                }
-                file << "\n";
-                
-                file << "SCALE ";
-                for (int j = 0; j < 16; ++j) {
-                    file << glm::value_ptr(node->scale)[j] << " ";
-                }
-                file << "\n";
-                
-                // Save color (first color in the colors vector)
-                if (!node->shape->colors.empty()) {
-                    const auto& color = node->shape->colors[0];
-                    file << "COLOR " << color.r << " " << color.g << " " << color.b << " " << color.a << "\n";
-                }
-            }
-        }
-        
-        file.close();
-        std::cout << "Model saved to " << filename << std::endl;
-    }
-    
-    // Load model from file
-    bool load(const std::string& filename) {
-        std::ifstream file(filename);
-        if (!file.is_open()) {
-            std::cout << "Failed to load model from " << filename << std::endl;
-            return false;
-        }
-        
-        clear(); // Remove existing model
-        
-        std::string line;
-        while (std::getline(file, line)) {
-            std::istringstream iss(line);
-            std::string token;
-            iss >> token;
-            
-            if (token == "SHAPE") {
-                int shapeIndex;
-                iss >> shapeIndex;
-                
-                // Read shape properties
-                int shapeType, level;
-                glm::mat4 translation(1.0f), rotation(1.0f), scale(1.0f);
-                glm::vec4 color(0.7f, 0.7f, 0.7f, 1.0f);
-                
-                while (std::getline(file, line) && !line.empty()) {
-                    std::istringstream propStream(line);
-                    std::string prop;
-                    propStream >> prop;
-                    
-                    if (prop == "TYPE") {
-                        propStream >> shapeType;
-                    } else if (prop == "LEVEL") {
-                        propStream >> level;
-                    } else if (prop == "TRANSLATION") {
-                        float* ptr = glm::value_ptr(translation);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
-                    } else if (prop == "ROTATION") {
-                        float* ptr = glm::value_ptr(rotation);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
-                    } else if (prop == "SCALE") {
-                        float* ptr = glm::value_ptr(scale);
-                        for (int i = 0; i < 16; ++i) {
-                            propStream >> ptr[i];
-                        }
-                    } else if (prop == "COLOR") {
-                        propStream >> color.r >> color.g >> color.b >> color.a;
-                    }
-                }
-                
-                // Create shape based on type
-                std::unique_ptr<shape_t> shape;
-                switch (static_cast<ShapeType>(shapeType)) {
-                    case SPHERE_SHAPE:
-                        shape = std::make_unique<sphere_t>(level);
-                        break;
-                    case CYLINDER_SHAPE:
-                        shape = std::make_unique<cylinder_t>(level);
-                        break;
-                    case BOX_SHAPE:
-                        shape = std::make_unique<box_t>(level);
-                        break;
-                    case CONE_SHAPE:
-                        shape = std::make_unique<cone_t>(level);
-                        break;
-                }
-                
-                if (shape) {
-                    shape->setColor(color);
-                    auto node = std::make_unique<HNode>(std::move(shape));
-                    node->translation = translation;
-                    node->rotation = rotation;
-                    node->scale = scale;
-                    nodes.push_back(std::move(node));
-                }
-            }
-        }
-        
-        file.close();
-        std::cout << "Model loaded from " << filename << std::endl;
-        return true;
-    }
-};
-
 // Sphere implementation
 class sphere_t : public shape_t {
 public:
@@ -317,7 +115,7 @@ public:
                 float z = cos(lat) * sin(lng);
                 
                 vertices.emplace_back(x, y, z, 1.0f);
-                colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+                colors.emplace_back(0.8f, 0.2f, 0.2f, 1.0f); // Red color
             }
         }
         
@@ -362,21 +160,27 @@ public:
         
         int segments = 6 + level * 3; // 6, 9, 12, 15, 18 segments based on level
         
+        // Add center vertices for caps
+        vertices.emplace_back(0, -1.0f, 0, 1.0f); // bottom center
+        colors.emplace_back(0.2f, 0.8f, 0.2f, 1.0f); // Green
+        vertices.emplace_back(0, 1.0f, 0, 1.0f);  // top center
+        colors.emplace_back(0.2f, 0.8f, 0.2f, 1.0f);
+        
         // Side vertices
         for (int i = 0; i <= segments; ++i) {
             float angle = 2.0f * M_PI * i / segments;
             float x = cos(angle);
             float z = sin(angle);
             
-            vertices.emplace_back(x, -0.5f, z, 1.0f); // bottom
-            vertices.emplace_back(x, 0.5f, z, 1.0f);  // top
-            colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-            colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+            vertices.emplace_back(x, -1.0f, z, 1.0f); // bottom
+            vertices.emplace_back(x, 1.0f, z, 1.0f);  // top
+            colors.emplace_back(0.2f, 0.8f, 0.2f, 1.0f);
+            colors.emplace_back(0.2f, 0.8f, 0.2f, 1.0f);
         }
         
-        // Side indices
+        // Side faces
         for (int i = 0; i < segments; ++i) {
-            int base = i * 2;
+            int base = 2 + i * 2; // offset by 2 for center vertices
             
             indices.push_back(base);
             indices.push_back(base + 1);
@@ -387,39 +191,24 @@ public:
             indices.push_back(base + 2);
         }
         
-        // Cap vertices and indices
-        int centerBottom = vertices.size();
-        vertices.emplace_back(0, -0.5f, 0, 1.0f);
-        colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-        
-        int centerTop = vertices.size();
-        vertices.emplace_back(0, 0.5f, 0, 1.0f);
-        colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-        
+        // Bottom cap
         for (int i = 0; i < segments; ++i) {
-            float angle = 2.0f * M_PI * i / segments;
-            float x = cos(angle);
-            float z = sin(angle);
+            int current = 2 + i * 2;
+            int next = 2 + ((i + 1) % segments) * 2;
             
-            vertices.emplace_back(x, -0.5f, z, 1.0f);
-            vertices.emplace_back(x, 0.5f, z, 1.0f);
-            colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-            colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+            indices.push_back(0); // bottom center
+            indices.push_back(next);
+            indices.push_back(current);
+        }
+        
+        // Top cap
+        for (int i = 0; i < segments; ++i) {
+            int current = 2 + i * 2 + 1;
+            int next = 2 + ((i + 1) % segments) * 2 + 1;
             
-            int bottomVertex = centerBottom + 2 + i * 2;
-            int topVertex = bottomVertex + 1;
-            int nextBottomVertex = centerBottom + 2 + ((i + 1) % segments) * 2;
-            int nextTopVertex = nextBottomVertex + 1;
-            
-            // Bottom cap
-            indices.push_back(centerBottom);
-            indices.push_back(nextBottomVertex);
-            indices.push_back(bottomVertex);
-            
-            // Top cap
-            indices.push_back(centerTop);
-            indices.push_back(topVertex);
-            indices.push_back(nextTopVertex);
+            indices.push_back(1); // top center
+            indices.push_back(current);
+            indices.push_back(next);
         }
     }
     
@@ -445,51 +234,38 @@ public:
         colors.clear();
         indices.clear();
         
-        // For a box, tessellation affects subdivision of faces
-        int subdivisions = level + 1; // 1, 2, 3, 4, 5 subdivisions based on level
+        // Simple cube vertices
+        std::vector<glm::vec3> cubeVertices = {
+            // Front face
+            {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
+            // Back face
+            {-1, -1, -1}, {-1,  1, -1}, { 1,  1, -1}, { 1, -1, -1},
+            // Top face
+            {-1,  1, -1}, {-1,  1,  1}, { 1,  1,  1}, { 1,  1, -1},
+            // Bottom face
+            {-1, -1, -1}, { 1, -1, -1}, { 1, -1,  1}, {-1, -1,  1},
+            // Right face
+            { 1, -1, -1}, { 1,  1, -1}, { 1,  1,  1}, { 1, -1,  1},
+            // Left face
+            {-1, -1, -1}, {-1, -1,  1}, {-1,  1,  1}, {-1,  1, -1}
+        };
         
-        // Generate vertices for each face with subdivisions
-        generateFace(glm::vec3(0, 0, 1), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), subdivisions); // Front
-        generateFace(glm::vec3(0, 0, -1), glm::vec3(-1, 0, 0), glm::vec3(0, 1, 0), subdivisions); // Back
-        generateFace(glm::vec3(0, 1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, 1), subdivisions); // Top
-        generateFace(glm::vec3(0, -1, 0), glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), subdivisions); // Bottom
-        generateFace(glm::vec3(1, 0, 0), glm::vec3(0, 0, -1), glm::vec3(0, 1, 0), subdivisions); // Right
-        generateFace(glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1), glm::vec3(0, 1, 0), subdivisions); // Left
-    }
-    
-    void generateFace(const glm::vec3& normal, const glm::vec3& tangent, const glm::vec3& bitangent, int subdivisions) {
-        int startVertex = vertices.size();
-        glm::vec3 center = normal * 0.5f;
-        
-        // Generate grid of vertices for this face
-        for (int i = 0; i <= subdivisions; ++i) {
-            for (int j = 0; j <= subdivisions; ++j) {
-                float u = (float)i / subdivisions - 0.5f;
-                float v = (float)j / subdivisions - 0.5f;
-                
-                glm::vec3 pos = center + tangent * u + bitangent * v;
-                vertices.emplace_back(pos.x, pos.y, pos.z, 1.0f);
-                colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
-            }
+        for (const auto& v : cubeVertices) {
+            vertices.emplace_back(v.x, v.y, v.z, 1.0f);
+            colors.emplace_back(0.2f, 0.2f, 0.8f, 1.0f); // Blue
         }
         
-        // Generate indices for this face
-        for (int i = 0; i < subdivisions; ++i) {
-            for (int j = 0; j < subdivisions; ++j) {
-                int topLeft = startVertex + i * (subdivisions + 1) + j;
-                int topRight = topLeft + 1;
-                int bottomLeft = topLeft + (subdivisions + 1);
-                int bottomRight = bottomLeft + 1;
-                
-                indices.push_back(topLeft);
-                indices.push_back(bottomLeft);
-                indices.push_back(topRight);
-                
-                indices.push_back(topRight);
-                indices.push_back(bottomLeft);
-                indices.push_back(bottomRight);
-            }
-        }
+        // Cube indices
+        std::vector<unsigned int> cubeIndices = {
+            0,  1,  2,   0,  2,  3,   // front
+            4,  5,  6,   4,  6,  7,   // back
+            8,  9, 10,   8, 10, 11,   // top
+            12, 13, 14,  12, 14, 15,  // bottom
+            16, 17, 18,  16, 18, 19,  // right
+            20, 21, 22,  20, 22, 23   // left
+        };
+        
+        indices = cubeIndices;
     }
     
     void draw() override {
@@ -517,12 +293,12 @@ public:
         int segments = 6 + level * 3; // 6, 9, 12, 15, 18 segments based on level
         
         // Apex vertex
-        vertices.emplace_back(0, 0.5f, 0, 1.0f);
-        colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+        vertices.emplace_back(0, 1.0f, 0, 1.0f);
+        colors.emplace_back(0.8f, 0.8f, 0.2f, 1.0f); // Yellow
         
         // Base center
-        vertices.emplace_back(0, -0.5f, 0, 1.0f);
-        colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+        vertices.emplace_back(0, -1.0f, 0, 1.0f);
+        colors.emplace_back(0.8f, 0.8f, 0.2f, 1.0f);
         
         // Base vertices
         for (int i = 0; i <= segments; ++i) {
@@ -530,11 +306,11 @@ public:
             float x = cos(angle);
             float z = sin(angle);
             
-            vertices.emplace_back(x, -0.5f, z, 1.0f);
-            colors.emplace_back(0.7f, 0.7f, 0.7f, 1.0f);
+            vertices.emplace_back(x, -1.0f, z, 1.0f);
+            colors.emplace_back(0.8f, 0.8f, 0.2f, 1.0f);
         }
         
-        // Side triangles
+        // Side triangles (apex to base edge)
         for (int i = 0; i < segments; ++i) {
             indices.push_back(0); // apex
             indices.push_back(i + 2);
@@ -557,110 +333,339 @@ public:
     }
 };
 
+// Hierarchical Node class
+class HNode {
+public:
+    std::unique_ptr<shape_t> shape;
+    glm::mat4 rotation;
+    glm::mat4 translation;
+    glm::mat4 scale;
+    std::vector<std::unique_ptr<HNode>> children;
+    
+    HNode(std::unique_ptr<shape_t> s) : shape(std::move(s)) {
+        rotation = glm::mat4(1.0f);
+        translation = glm::mat4(1.0f);
+        scale = glm::mat4(1.0f);
+    }
+    
+    void render(const glm::mat4& parentTransform = glm::mat4(1.0f)) {
+        glm::mat4 currentTransform = parentTransform * translation * rotation * scale;
+        
+        // Set model matrix uniform
+        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        if (modelLoc != -1) {
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(currentTransform));
+        }
+        
+        if (shape) {
+            shape->draw();
+        }
+        
+        // Render children
+        for (auto& child : children) {
+            child->render(currentTransform);
+        }
+    }
+    
+    void addChild(std::unique_ptr<HNode> child) {
+        children.push_back(std::move(child));
+    }
+};
+
+// Model class
+class model_t {
+private:
+    std::vector<std::unique_ptr<HNode>> nodes;
+    
+public:
+    void addShape(std::unique_ptr<shape_t> shape) {
+        auto node = std::make_unique<HNode>(std::move(shape));
+        nodes.push_back(std::move(node));
+    }
+    
+    void removeLastShape() {
+        if (!nodes.empty()) {
+            nodes.pop_back();
+        }
+    }
+    
+    HNode* getLastNode() {
+        return nodes.empty() ? nullptr : nodes.back().get();
+    }
+    
+    void render() {
+        for (auto& node : nodes) {
+            node->render();
+        }
+    }
+    
+    size_t getShapeCount() const {
+        return nodes.size();
+    }
+    
+    void clear() {
+        nodes.clear();
+    }
+    
+    bool isEmpty() const {
+        return nodes.empty();
+    }
+    
+    // Save and load methods (simplified versions)
+    void save(const std::string& filename) {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cout << "Failed to save model to " << filename << std::endl;
+            return;
+        }
+        
+        file << "MODEL_FILE_VERSION 1.0\n";
+        file << "SHAPE_COUNT " << nodes.size() << "\n";
+        
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            const auto& node = nodes[i];
+            if (node->shape) {
+                file << "SHAPE " << i << "\n";
+                file << "TYPE " << static_cast<int>(node->shape->shapetype) << "\n";
+                file << "LEVEL " << node->shape->level << "\n";
+                
+                // Save first color
+                if (!node->shape->colors.empty()) {
+                    const auto& color = node->shape->colors[0];
+                    file << "COLOR " << color.r << " " << color.g << " " << color.b << " " << color.a << "\n";
+                }
+            }
+        }
+        
+        file.close();
+        std::cout << "Model saved to " << filename << std::endl;
+    }
+    
+    bool load(const std::string& filename) {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cout << "Failed to load model from " << filename << std::endl;
+            return false;
+        }
+        
+        clear();
+        
+        std::string line;
+        while (std::getline(file, line)) {
+            std::istringstream iss(line);
+            std::string token;
+            iss >> token;
+            
+            if (token == "SHAPE") {
+                int shapeType = 0, level = 1;
+                glm::vec4 color(0.7f, 0.7f, 0.7f, 1.0f);
+                
+                // Read next few lines for shape properties
+                for (int i = 0; i < 3; ++i) {
+                    if (std::getline(file, line)) {
+                        std::istringstream propStream(line);
+                        std::string prop;
+                        propStream >> prop;
+                        
+                        if (prop == "TYPE") {
+                            propStream >> shapeType;
+                        } else if (prop == "LEVEL") {
+                            propStream >> level;
+                        } else if (prop == "COLOR") {
+                            propStream >> color.r >> color.g >> color.b >> color.a;
+                        }
+                    }
+                }
+                
+                // Create shape
+                std::unique_ptr<shape_t> shape;
+                switch (static_cast<ShapeType>(shapeType)) {
+                    case SPHERE_SHAPE:
+                        shape = std::make_unique<sphere_t>(level);
+                        break;
+                    case CYLINDER_SHAPE:
+                        shape = std::make_unique<cylinder_t>(level);
+                        break;
+                    case BOX_SHAPE:
+                        shape = std::make_unique<box_t>(level);
+                        break;
+                    case CONE_SHAPE:
+                        shape = std::make_unique<cone_t>(level);
+                        break;
+                }
+                
+                if (shape) {
+                    shape->setColor(color);
+                    addShape(std::move(shape));
+                }
+            }
+        }
+        
+        file.close();
+        std::cout << "Model loaded from " << filename << std::endl;
+        return true;
+    }
+};
+
 // Global variables
 Mode currentMode = MODELLING;
 TransformMode transformMode = NONE;
 char activeAxis = 'X';
 std::unique_ptr<model_t> currentModel;
 HNode* currentNode = nullptr;
-
-// Camera variables
-float cameraDistance = 5.0f;
-float cameraAngleX = 0.0f;
-float cameraAngleY = 0.0f;
 glm::mat4 modelRotation = glm::mat4(1.0f);
 
-// Function declarations
-void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-void handleModellingKeys(int key);
-void handleInspectionKeys(int key);
-void applyTransform(int direction);
-void setupOpenGL();
-void renderScene();
-void updateCamera();
-void printInstructions();
+// Camera variables
+glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 5.0f);
+glm::vec3 cameraTarget = glm::vec3(0.0f, 0.0f, 0.0f);
+glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
-// Key handling implementation
-void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+// Shader creation functions
+GLuint compileShader(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    
+    GLint success;
+    GLchar infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        std::cout << "Shader compilation failed: " << infoLog << std::endl;
+    }
+    
+    return shader;
+}
 
-    if (key == GLFW_KEY_M) {
-        currentMode = MODELLING;
-        std::cout << "Mode: MODELLING" << std::endl;
+GLuint createShaderProgram() {
+    const char* vertexShaderSource = R"(
+    #version 330 core
+    layout (location = 0) in vec4 aPos;
+    layout (location = 1) in vec4 aColor;
+    
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+    
+    out vec4 vertexColor;
+    
+    void main() {
+        gl_Position = projection * view * model * aPos;
+        vertexColor = aColor;
     }
-    else if (key == GLFW_KEY_I) {
-        currentMode = INSPECTION;
-        std::cout << "Mode: INSPECTION" << std::endl;
+    )";
+    
+    const char* fragmentShaderSource = R"(
+    #version 330 core
+    in vec4 vertexColor;
+    out vec4 FragColor;
+    
+    void main() {
+        FragColor = vertexColor;
     }
-    else if (key == GLFW_KEY_ESCAPE) {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    )";
+    
+    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
+    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
+    
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
+    
+    GLint success;
+    GLchar infoLog[512];
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(program, 512, nullptr, infoLog);
+        std::cout << "Shader program linking failed: " << infoLog << std::endl;
     }
+    
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    
+    return program;
+}
 
-    if (currentMode == MODELLING) {
-        handleModellingKeys(key);
-    } else if (currentMode == INSPECTION) {
-        handleInspectionKeys(key);
+// Key handling functions
+void applyTransform(int direction) {
+    if (!currentNode || transformMode == NONE) return;
+    
+    float amount = direction * 0.1f;
+    float rotAmount = direction * glm::radians(5.0f);
+    float scaleAmount = direction > 0 ? 1.1f : 0.9f;
+    
+    glm::vec3 axis(0);
+    switch (activeAxis) {
+        case 'X': axis = glm::vec3(1, 0, 0); break;
+        case 'Y': axis = glm::vec3(0, 1, 0); break;
+        case 'Z': axis = glm::vec3(0, 0, 1); break;
+    }
+    
+    switch (transformMode) {
+        case ROTATE:
+            currentNode->rotation = glm::rotate(currentNode->rotation, rotAmount, axis);
+            break;
+        case TRANSLATE:
+            currentNode->translation = glm::translate(currentNode->translation, axis * amount);
+            break;
+        case SCALE:
+            currentNode->scale = glm::scale(currentNode->scale, axis * (scaleAmount - 1.0f) + glm::vec3(1.0f));
+            break;
     }
 }
 
 void handleModellingKeys(int key) {
     switch (key) {
-        // Add shapes
         case GLFW_KEY_1:
             currentModel->addShape(std::make_unique<sphere_t>(1));
             currentNode = currentModel->getLastNode();
-            std::cout << "Sphere added\n";
+            std::cout << "Sphere added" << std::endl;
             break;
         case GLFW_KEY_2:
             currentModel->addShape(std::make_unique<cylinder_t>(1));
             currentNode = currentModel->getLastNode();
-            std::cout << "Cylinder added\n";
+            std::cout << "Cylinder added" << std::endl;
             break;
         case GLFW_KEY_3:
             currentModel->addShape(std::make_unique<box_t>(1));
             currentNode = currentModel->getLastNode();
-            std::cout << "Box added\n";
+            std::cout << "Box added" << std::endl;
             break;
         case GLFW_KEY_4:
             currentModel->addShape(std::make_unique<cone_t>(1));
             currentNode = currentModel->getLastNode();
-            std::cout << "Cone added\n";
+            std::cout << "Cone added" << std::endl;
             break;
         case GLFW_KEY_5:
             currentModel->removeLastShape();
             currentNode = currentModel->getLastNode();
-            std::cout << "Last shape removed\n";
+            std::cout << "Last shape removed" << std::endl;
             break;
-
-        // Transform mode selection
         case GLFW_KEY_R:
             transformMode = ROTATE;
-            std::cout << "Transform mode: ROTATE\n";
+            std::cout << "Transform mode: ROTATE" << std::endl;
             break;
         case GLFW_KEY_T:
             transformMode = TRANSLATE;
-            std::cout << "Transform mode: TRANSLATE\n";
+            std::cout << "Transform mode: TRANSLATE" << std::endl;
             break;
         case GLFW_KEY_G:
             transformMode = SCALE;
-            std::cout << "Transform mode: SCALE\n";
+            std::cout << "Transform mode: SCALE" << std::endl;
             break;
-
-        // Axis selection
         case GLFW_KEY_X:
             activeAxis = 'X';
-            std::cout << "Active Axis: X\n";
+            std::cout << "Active Axis: X" << std::endl;
             break;
         case GLFW_KEY_Y:
             activeAxis = 'Y';
-            std::cout << "Active Axis: Y\n";
+            std::cout << "Active Axis: Y" << std::endl;
             break;
         case GLFW_KEY_Z:
             activeAxis = 'Z';
-            std::cout << "Active Axis: Z\n";
+            std::cout << "Active Axis: Z" << std::endl;
             break;
-
-        // Apply transformations
         case GLFW_KEY_KP_ADD:
         case GLFW_KEY_EQUAL:
             applyTransform(+1);
@@ -669,19 +674,16 @@ void handleModellingKeys(int key) {
         case GLFW_KEY_MINUS:
             applyTransform(-1);
             break;
-
-        // Change color
         case GLFW_KEY_C: {
-            float r, g, b;
-            std::cout << "Enter RGB values (0-1): ";
-            std::cin >> r >> g >> b;
             if (currentNode && currentNode->shape) {
+                float r, g, b;
+                std::cout << "Enter RGB values (0-1): ";
+                std::cin >> r >> g >> b;
                 currentNode->shape->setColor(glm::vec4(r, g, b, 1.0f));
+                std::cout << "Color changed" << std::endl;
             }
             break;
         }
-        
-        // Save model
         case GLFW_KEY_S: {
             std::string filename;
             std::cout << "Enter filename (with .mod extension): ";
@@ -697,43 +699,32 @@ void handleModellingKeys(int key) {
 
 void handleInspectionKeys(int key) {
     switch (key) {
-        // Load model
         case GLFW_KEY_L: {
             std::string filename;
             std::cout << "Enter filename to load: ";
             std::cin >> filename;
             if (currentModel->load(filename)) {
                 currentNode = currentModel->getLastNode();
-                // Reset camera to view loaded model
-                cameraDistance = 5.0f;
-                cameraAngleX = 0.0f;
-                cameraAngleY = 0.0f;
                 modelRotation = glm::mat4(1.0f);
             }
             break;
         }
-        
-        // Model rotation mode
         case GLFW_KEY_R:
             transformMode = ROTATE;
-            std::cout << "Model rotation mode activated\n";
+            std::cout << "Model rotation mode activated" << std::endl;
             break;
-            
-        // Axis selection for model rotation
         case GLFW_KEY_X:
             activeAxis = 'X';
-            std::cout << "Model rotation axis: X\n";
+            std::cout << "Model rotation axis: X" << std::endl;
             break;
         case GLFW_KEY_Y:
             activeAxis = 'Y';
-            std::cout << "Model rotation axis: Y\n";
+            std::cout << "Model rotation axis: Y" << std::endl;
             break;
         case GLFW_KEY_Z:
             activeAxis = 'Z';
-            std::cout << "Model rotation axis: Z\n";
+            std::cout << "Model rotation axis: Z" << std::endl;
             break;
-            
-        // Apply model rotation
         case GLFW_KEY_KP_ADD:
         case GLFW_KEY_EQUAL:
             if (transformMode == ROTATE) {
@@ -755,4 +746,173 @@ void handleInspectionKeys(int key) {
                     case 'Z': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(0, 0, 1)); break;
                 }
             }
-            break
+            break;
+    }
+}
+
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+
+    if (key == GLFW_KEY_M) {
+        currentMode = MODELLING;
+        transformMode = NONE;
+        std::cout << "Mode: MODELLING" << std::endl;
+    }
+    else if (key == GLFW_KEY_I) {
+        currentMode = INSPECTION;
+        transformMode = NONE;
+        std::cout << "Mode: INSPECTION" << std::endl;
+    }
+    else if (key == GLFW_KEY_ESCAPE) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
+
+    if (currentMode == MODELLING) {
+        handleModellingKeys(key);
+    } else if (currentMode == INSPECTION) {
+        handleInspectionKeys(key);
+    }
+}
+
+void printInstructions() {
+    std::cout << "\n=== 3D MODELLER CONTROLS ===" << std::endl;
+    std::cout << "Mode switching:" << std::endl;
+    std::cout << "  M - Modeling Mode" << std::endl;
+    std::cout << "  I - Inspection Mode" << std::endl;
+    std::cout << "  ESC - Exit" << std::endl;
+    
+    std::cout << "\nModeling Mode:" << std::endl;
+    std::cout << "  1-4 - Add sphere/cylinder/box/cone" << std::endl;
+    std::cout << "  5 - Remove last shape" << std::endl;
+    std::cout << "  R - Rotation mode" << std::endl;
+    std::cout << "  T - Translation mode" << std::endl;
+    std::cout << "  G - Scaling mode" << std::endl;
+    std::cout << "  C - Change color" << std::endl;
+    std::cout << "  S - Save model" << std::endl;
+    
+    std::cout << "\nInspection Mode:" << std::endl;
+    std::cout << "  L - Load model" << std::endl;
+    std::cout << "  R - Rotate model" << std::endl;
+    
+    std::cout << "\nTransform Controls:" << std::endl;
+    std::cout << "  X/Y/Z - Select axis" << std::endl;
+    std::cout << "  +/- - Apply transformation" << std::endl;
+    std::cout << "==============================\n" << std::endl;
+}
+
+void setupOpenGL() {
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+}
+
+void updateCamera() {
+    // For inspection mode, apply model rotation
+    glm::vec3 finalCameraPos = cameraPos;
+    glm::vec3 finalCameraTarget = cameraTarget;
+    
+    if (currentMode == INSPECTION) {
+        // Apply model rotation to camera position
+        glm::vec4 rotatedPos = modelRotation * glm::vec4(cameraPos, 1.0f);
+        finalCameraPos = glm::vec3(rotatedPos);
+    }
+}
+
+void renderScene() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    glUseProgram(shaderProgram);
+    
+    // Set up view and projection matrices
+    glm::mat4 view = glm::lookAt(cameraPos, cameraTarget, cameraUp);
+    glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1024.0f/768.0f, 0.1f, 100.0f);
+    
+    GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+    GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+    
+    if (viewLoc != -1) {
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+    }
+    if (projLoc != -1) {
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+    }
+    
+    // Apply global model rotation for inspection mode
+    if (currentMode == INSPECTION) {
+        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        if (modelLoc != -1) {
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelRotation));
+        }
+    }
+    
+    // Render the model
+    if (currentModel && !currentModel->isEmpty()) {
+        currentModel->render();
+    }
+}
+
+int main() {
+    // Initialize GLFW
+    if (!glfwInit()) {
+        std::cout << "Failed to initialize GLFW" << std::endl;
+        return -1;
+    }
+    
+    // Configure GLFW
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_DEPTH_BITS, 24);
+    
+    // Create window
+    GLFWwindow* window = glfwCreateWindow(1024, 768, "3D Modeller", nullptr, nullptr);
+    if (!window) {
+        std::cout << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+    
+    glfwMakeContextCurrent(window);
+    glfwSetKeyCallback(window, keyCallback);
+    
+    // Initialize GLEW
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        std::cout << "Failed to initialize GLEW" << std::endl;
+        return -1;
+    }
+    
+    // Setup OpenGL
+    setupOpenGL();
+    
+    // Create shader program
+    shaderProgram = createShaderProgram();
+    if (shaderProgram == 0) {
+        std::cout << "Failed to create shader program" << std::endl;
+        return -1;
+    }
+    
+    // Initialize model
+    currentModel = std::make_unique<model_t>();
+    
+    std::cout << "3D Modeller initialized successfully!" << std::endl;
+    printInstructions();
+    std::cout << "Mode: MODELLING" << std::endl;
+    
+    // Main render loop
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        renderScene();
+        glfwSwapBuffers(window);
+    }
+    
+    // Cleanup
+    currentModel.reset();
+    if (shaderProgram) {
+        glDeleteProgram(shaderProgram);
+    }
+    glfwTerminate();
+    
+    std::cout << "Application terminated successfully." << std::endl;
+    return 0;
+}
