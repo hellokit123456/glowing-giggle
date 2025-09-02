@@ -3,225 +3,255 @@
 
 #include <vector>
 #include <memory>
+#include <GL/glew.h>   
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 
+// Shape Types
 enum ShapeType {
     SPHERE_SHAPE,
-    CYLINDER_SHAPE,
+    CONE_SHAPE,
     BOX_SHAPE,
-    CONE_SHAPE
+    CYLINDER_SHAPE
 };
 
+// Base Class
 class shape_t {
-protected:
+public:
+    void setColor(const glm::vec4& c) { 
+        colors.assign(1, c); 
+    }
     std::vector<glm::vec4> vertices;
     std::vector<glm::vec4> colors;
+    std::vector<unsigned int> indices;
+
+    GLuint VAO = 0, VBO = 0, CBO = 0, EBO = 0;
     ShapeType shapetype;
     unsigned int level;
 
-public:
-    // Pure virtual constructor - derived classes must implement
-    shape_t(unsigned int tesselation_level) : level(tesselation_level) {
+    // GPU setup
+    void setupBuffers() {
+        if (VAO != 0) return; // Already initialized
+
+        glGenVertexArrays(1, &VAO);
+        glBindVertexArray(VAO);
+
+        // Vertex positions
+        glGenBuffers(1, &VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec4),
+                     vertices.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, (void*)0);
+        glEnableVertexAttribArray(0);
+
+        // Vertex colors
+        glGenBuffers(1, &CBO);
+        glBindBuffer(GL_ARRAY_BUFFER, CBO);
+        glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(glm::vec4),
+                     colors.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, (void*)0);
+        glEnableVertexAttribArray(1);
+
+        // Indices
+        glGenBuffers(1, &EBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int),
+                     indices.data(), GL_STATIC_DRAW);
+
+        glBindVertexArray(0);
+    }
+
+    shape_t(unsigned int tesselation_level = 1)
+        : shapetype(SPHERE_SHAPE), level(tesselation_level) {
         if (level > 4) level = 4;
-        if (level < 0) level = 0;
     }
-    
-    virtual ~shape_t() = default;
-    
-    // Pure virtual draw method
-    virtual void draw() = 0;
-    
-    // Getters
-    const std::vector<glm::vec4>& getVertices() const { return vertices; }
-    const std::vector<glm::vec4>& getColors() const { return colors; }
-    ShapeType getShapeType() const { return shapetype; }
+
+    virtual ~shape_t() {
+        if (VAO) glDeleteVertexArrays(1, &VAO);
+        if (VBO) glDeleteBuffers(1, &VBO);
+        if (CBO) glDeleteBuffers(1, &CBO);
+        if (EBO) glDeleteBuffers(1, &EBO);
+    }
+
+    ShapeType getType() const { return shapetype; }
     unsigned int getLevel() const { return level; }
-    
-    // Setters
-    void setColor(const glm::vec4& color) {
-        for (auto& c : colors) {
-            c = color;
+
+    // Must be implemented by each shape
+    virtual void generateGeometry() = 0;
+
+    // Common draw method
+    virtual void draw() {
+        if (VAO == 0) {
+            generateGeometry();
+            setupBuffers();
         }
-    }
-    
-    // Transformation methods - to be called from input handler
-    virtual void rotate(char axis, bool positive) = 0;
-    virtual void translate(char axis, bool positive) = 0;
-    virtual void scale(char axis, bool positive) = 0;
-    
-    // Get centroid of the shape
-    glm::vec3 getCentroid() const {
-        glm::vec3 centroid(0.0f);
-        for (const auto& vertex : vertices) {
-            centroid += glm::vec3(vertex);
-        }
-        if (!vertices.empty()) {
-            centroid /= vertices.size();
-        }
-        return centroid;
+        glBindVertexArray(VAO);
+        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
     }
 };
 
+// Sphere
 class sphere_t : public shape_t {
-private:
-    float radius;
-    glm::mat4 transform;
-    
-    void generateSphere();
-    
 public:
-    sphere_t(unsigned int tesselation_level, float r = 1.0f) 
-        : shape_t(tesselation_level), radius(r), transform(1.0f) {
+    sphere_t(unsigned int tesselation_level = 2) : shape_t(tesselation_level) {
         shapetype = SPHERE_SHAPE;
-        generateSphere();
     }
-    
-    void draw() override;
-    void rotate(char axis, bool positive) override;
-    void translate(char axis, bool positive) override;
-    void scale(char axis, bool positive) override;
+
+    void generateGeometry() override {
+        vertices.clear();
+        colors.clear();
+        indices.clear();
+
+        unsigned int stacks = 10 * level;
+        unsigned int slices = 10 * level;
+
+        for (unsigned int i = 0; i <= stacks; ++i) {
+            float phi = glm::pi<float>() * i / stacks;
+            for (unsigned int j = 0; j <= slices; ++j) {
+                float theta = 2.0f * glm::pi<float>() * j / slices;
+                float x = sin(phi) * cos(theta);
+                float y = cos(phi);
+                float z = sin(phi) * sin(theta);
+
+                vertices.emplace_back(x, y, z, 1.0f);
+                colors.emplace_back((x+1)/2, (y+1)/2, (z+1)/2, 1.0f);
+            }
+        }
+
+        for (unsigned int i = 0; i < stacks; ++i) {
+            for (unsigned int j = 0; j < slices; ++j) {
+                unsigned int first = i * (slices + 1) + j;
+                unsigned int second = first + slices + 1;
+
+                indices.push_back(first);
+                indices.push_back(second);
+                indices.push_back(first + 1);
+
+                indices.push_back(second);
+                indices.push_back(second + 1);
+                indices.push_back(first + 1);
+            }
+        }
+    }
 };
 
-class cylinder_t : public shape_t {
-private:
-    float radius;
-    float height;
-    glm::mat4 transform;
-    
-    void generateCylinder();
-    
-public:
-    cylinder_t(unsigned int tesselation_level, float r = 1.0f, float h = 2.0f)
-        : shape_t(tesselation_level), radius(r), height(h), transform(1.0f) {
-        shapetype = CYLINDER_SHAPE;
-        generateCylinder();
-    }
-    
-    void draw() override;
-    void rotate(char axis, bool positive) override;
-    void translate(char axis, bool positive) override;
-    void scale(char axis, bool positive) override;
-};
-
-class box_t : public shape_t {
-private:
-    float width, height, depth;
-    glm::mat4 transform;
-    
-    void generateBox();
-    
-public:
-    box_t(unsigned int tesselation_level, float w = 1.0f, float h = 1.0f, float d = 1.0f)
-        : shape_t(tesselation_level), width(w), height(h), depth(d), transform(1.0f) {
-        shapetype = BOX_SHAPE;
-        generateBox();
-    }
-    
-    void draw() override;
-    void rotate(char axis, bool positive) override;
-    void translate(char axis, bool positive) override;
-    void scale(char axis, bool positive) override;
-};
-
+// Cone
 class cone_t : public shape_t {
-private:
-    float radius;
-    float height;
-    glm::mat4 transform;
-    
-    void generateCone();
-    
 public:
-    cone_t(unsigned int tesselation_level, float r = 1.0f, float h = 2.0f)
-        : shape_t(tesselation_level), radius(r), height(h), transform(1.0f) {
+    cone_t(unsigned int tesselation_level = 2) : shape_t(tesselation_level) {
         shapetype = CONE_SHAPE;
-        generateCone();
-    }
-    
-    void draw() override;
-    void rotate(char axis, bool positive) override;
-    void translate(char axis, bool positive) override;
-    void scale(char axis, bool positive) override;
-};
-
-// Model Node for hierarchical structureclass model_node_t : public std::enable_shared_from_this<model_node_t> {
-public:
-    int id = -1;
-    ShapeType type = SPHERE_SHAPE;
-    glm::mat4 translation;
-    glm::mat4 rotation;
-    glm::mat4 scale;
-    glm::vec4 color = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
-
-    std::weak_ptr<model_node_t> parent;                      // for UI tree traversal
-    std::vector<std::shared_ptr<model_node_t>> children;     // UI children
-    HNode* hnode_ptr = nullptr;                              // non-owning pointer to the corresponding HNode
-
-    // optional: pointer to Shape geometry (if you need centroid/mesh access)
-    std::shared_ptr<Shape> shape; 
-
-    // Constructor
-    model_node_t() {
-        rotation = glm::mat4(1.0f);
-        scale = glm::mat4(1.0f);
-        translation = glm::mat4(1.0f);
     }
 
-    // Local transform
-    glm::mat4 getTransform() const {
-        return translation * rotation * scale;
-    }
+    void generateGeometry() override {
+        vertices.clear();
+        colors.clear();
+        indices.clear();
 
-    // Global transform (recursively up the tree)
-    glm::mat4 getGlobalTransform() const {
-        if (auto p = parent.lock()) {
-            return p->getGlobalTransform() * getTransform();
+        unsigned int slices = 20 * level;
+        vertices.emplace_back(0, 1, 0, 1); // top
+        colors.emplace_back(1, 0, 0, 1);
+
+        for (unsigned int i = 0; i <= slices; ++i) {
+            float theta = 2.0f * glm::pi<float>() * i / slices;
+            float x = cos(theta);
+            float z = sin(theta);
+            vertices.emplace_back(x, -1, z, 1);
+            colors.emplace_back(0, 1, 0, 1);
         }
-        return getTransform();
-    }
 
-    // Add child to hierarchy
-    void addChild(std::shared_ptr<model_node_t> child) {
-        child->parent = shared_from_this();
-        children.push_back(child);
-    }
-
-    // Compute world-space centroid
-    glm::vec3 getCentroid() const {
-        if (shape) {
-            glm::vec4 centroid = getGlobalTransform() * glm::vec4(shape->getCentroid(), 1.0f);
-            return glm::vec3(centroid);
+        for (unsigned int i = 1; i <= slices; ++i) {
+            indices.push_back(0);
+            indices.push_back(i);
+            indices.push_back(i+1);
         }
-        return glm::vec3(0.0f);
     }
 };
 
-class model_t {
-private:
-    std::shared_ptr<model_node_t> root;
-    std::vector<std::shared_ptr<model_node_t>> shapes; // For easy access to all shapes
-    
+// Box
+class box_t : public shape_t {
 public:
-    model_t() {
-        root = std::make_shared<model_node_t>();
+virtual void setColor(const glm::vec4& color) {
+    std::fill(colors.begin(), colors.end(), color);
+    // Update GPU buffer if already initialized
+    if (CBO != 0) {
+        glBindBuffer(GL_ARRAY_BUFFER, CBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, colors.size() * sizeof(glm::vec4), colors.data());
+    }
+}
+    box_t(unsigned int tesselation_level = 1) : shape_t(tesselation_level) {
+        shapetype = BOX_SHAPE;
+    }
+
+    void generateGeometry() override {
+        vertices.clear();
+        colors.clear();
+        indices.clear();
+
+        glm::vec4 v[] = {
+            {-1,-1,-1,1}, {1,-1,-1,1}, {1,1,-1,1}, {-1,1,-1,1},
+            {-1,-1, 1,1}, {1,-1, 1,1}, {1,1, 1,1}, {-1,1, 1,1}
+        };
+
+        for (int i = 0; i < 8; i++) {
+            vertices.push_back(v[i]);
+            colors.emplace_back((i&1)?1:0, (i&2)?1:0, (i&4)?1:0, 1);
+        }
+
+        unsigned int idx[] = {
+            0,1,2, 2,3,0,  // back
+            4,5,6, 6,7,4,  // front
+            0,4,7, 7,3,0,  // left
+            1,5,6, 6,2,1,  // right
+            3,2,6, 6,7,3,  // top
+            0,1,5, 5,4,0   // bottom
+        };
+        indices.assign(idx, idx+36);
+    }
+};
+
+// Cylinder
+class cylinder_t : public shape_t {
+public:
+    cylinder_t(unsigned int tesselation_level = 2) : shape_t(tesselation_level) {
+        shapetype = CYLINDER_SHAPE;
+    }
+
+   void generateGeometry() override {
+    vertices.clear();
+    colors.clear();
+    indices.clear();
+    
+    unsigned int slices = 20 * level;
+    
+    // Generate vertices (this part is correct)
+    for (unsigned int i = 0; i <= slices; ++i) {
+        float theta = 2.0f * glm::pi<float>() * i / slices;
+        float x = cos(theta);
+        float z = sin(theta);
+        
+        vertices.emplace_back(x, 1, z, 1);   // Top vertex (even index)
+        colors.emplace_back(1, 0, 0, 1);     // Red
+        
+        vertices.emplace_back(x, -1, z, 1);  // Bottom vertex (odd index)  
+        colors.emplace_back(0, 0, 1, 1);     // Blue
     }
     
-    void addShape(std::shared_ptr<shape_t> shape);
-    void removeLastShape();
-    void clear();
-    
-    std::shared_ptr<model_node_t> getCurrentShape() {
-        return shapes.empty() ? nullptr : shapes.back();
+    // Fixed index generation
+    for (unsigned int i = 0; i < slices; ++i) {
+        unsigned int curr = i * 2;      // Current pair start
+        unsigned int next = (i + 1) * 2; // Next pair start
+        
+        // Triangle 1: curr_top, curr_bottom, next_top
+        indices.push_back(curr);        // Current top
+        indices.push_back(curr + 1);    // Current bottom
+        indices.push_back(next);        // Next top
+        
+        // Triangle 2: curr_bottom, next_bottom, next_top  
+        indices.push_back(curr + 1);    // Current bottom
+        indices.push_back(next + 1);    // Next bottom
+        indices.push_back(next);        // Next top
     }
-    
-    std::shared_ptr<model_node_t> getRoot() { return root; }
-    const std::vector<std::shared_ptr<model_node_t>>& getShapes() const { return shapes; }
-    
-    void draw();
-    
-    // Model transformations (for inspection mode)
-    void rotateModel(char axis, bool positive);
+}
 };
 
 #endif // SHAPE_H
