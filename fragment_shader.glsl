@@ -1,9 +1,6 @@
 #version 330 core
+out vec4 FragColor;
 
-in vec4 vColor;        // interpolated color from vertex shader
-out vec4 FragColor;    // final fragment color
-
-void main()
-{
-    FragColor = vColor;
+void main() {
+    FragColor = vec4(1.0, 0.0, 0.0, 1.0); // solid red
 }
