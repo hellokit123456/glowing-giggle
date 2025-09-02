@@ -1,410 +1,294 @@
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
+#include <GL/glew.h>     // MUST come first
+#include <GLFW/glfw3.h>  // then GLFW
+#include <glm/glm.hpp>   // then GLM
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <iostream>
-#include <string>
-#include <memory>
 #include "shape.h"
+#include "globals.h"
+#include "input.h"
+#include "HIERARCHIAL.h"
 
-// Global variables for application state
-enum Mode {
-    MODELLING,
-    INSPECTION
-};
 
-enum TransformMode {
-    NONE,
-    ROTATION,
-    TRANSLATION,
-    SCALING
-};
-
-// Application state
-Mode currentMode = MODELLING;
-TransformMode transformMode = NONE;
-char currentAxis = 'X';
-std::unique_ptr<model_t> currentModel;
-GLFWwindow* window;
-
-// Window dimensions
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
-
-// Function declarations
-void initializeOpenGL();
-void setupCallbacks();
-void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
-void handleModellingMode(int key);
-void handleInspectionMode(int key);
-void handleTransformMode(int key);
-void render();
-void cleanup();
-void printCurrentMode();
-void addShape(ShapeType type);
-void removeLastShape();
-void activateRotationMode();
-void activateTranslationMode();
-void activateScalingMode();
-void chooseAxis(char axis);
-void applyTransformation(bool positive);
-void changeShapeColor();
-void saveModel();
-void loadModel();
-
-int main() {
-    // Initialize GLFW
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        return -1;
+bool Wireframe = false;
+bool tesselationMode = false;
+shape_t* getCurrentShape() {
+    if (currentNode && currentNode->shape) {
+        return currentNode->shape.get();  // unique_ptr → raw pointer
     }
-
-    // Create window
-    window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Shape Modeler", nullptr, nullptr);
-    if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
-        glfwTerminate();
-        return -1;
-    }
-
-    glfwMakeContextCurrent(window);
-
-    // Initialize GLEW
-    if (glewInit() != GLEW_OK) {
-        std::cerr << "Failed to initialize GLEW" << std::endl;
-        return -1;
-    }
-
-    // Initialize OpenGL settings
-    initializeOpenGL();
-    
-    // Setup input callbacks
-    setupCallbacks();
-    
-    // Initialize model
-    currentModel = std::make_unique<model_t>();
-    
-    // Print initial mode
-    printCurrentMode();
-
-    // Main render loop
-    while (!glfwWindowShouldClose(window)) {
-        // Render
-        render();
-        
-        // Swap buffers and poll events
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
-
-    // Cleanup
-    cleanup();
-    return 0;
+    return nullptr;
 }
 
-void initializeOpenGL() {
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-    
-    // Setup basic lighting and projection matrices here
-    // This would typically involve shader setup, but that's beyond current scope
-}
+void applyTransform(int direction) {
+    if (!currentNode) return;
 
-void setupCallbacks() {
-    glfwSetKeyCallback(window, keyCallback);
-}
+    float step = 0.1f;
+    float angle = glm::radians(5.0f);
 
+    switch (transformMode) {
+        case TRANSLATE:
+            if (activeAxis == 'X') currentNode->translation = glm::translate(currentNode->translation, glm::vec3(direction * step, 0, 0));
+            if (activeAxis == 'Y') currentNode->translation = glm::translate(currentNode->translation, glm::vec3(0, direction * step, 0));
+            if (activeAxis == 'Z') currentNode->translation = glm::translate(currentNode->translation, glm::vec3(0, 0, direction * step));
+            break;
+        case ROTATE:
+            if (activeAxis == 'X') currentNode->rotation = glm::rotate(currentNode->rotation, direction * angle, glm::vec3(1, 0, 0));
+            if (activeAxis == 'Y') currentNode->rotation = glm::rotate(currentNode->rotation, direction * angle, glm::vec3(0, 1, 0));
+            if (activeAxis == 'Z') currentNode->rotation = glm::rotate(currentNode->rotation, direction * angle, glm::vec3(0, 0, 1));
+            break;
+        case SCALE:
+            if (activeAxis == 'X') currentNode->scale = glm::scale(currentNode->scale, glm::vec3(1 + direction * 0.1f, 1, 1));
+            if (activeAxis == 'Y') currentNode->scale = glm::scale(currentNode->scale, glm::vec3(1, 1 + direction * 0.1f, 1));
+            if (activeAxis == 'Z') currentNode->scale = glm::scale(currentNode->scale, glm::vec3(1, 1, 1 + direction * 0.1f));
+            break;
+        default:
+            break;
+    }
+}
+void setupOpenGL();
+void renderScene(GLuint shaderProgram);
+void updateCamera();
+void printInstructions();
+    shape_t* shape = getCurrentShape(); 
+
+// Key handling implementation
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action != GLFW_PRESS) return;
-    
-    // Global keys
-    if (key == GLFW_KEY_ESCAPE) {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-        return;
-    }
+    if (action != GLFW_PRESS && action != GLFW_REPEAT) return;
+   
     
     if (key == GLFW_KEY_M) {
         currentMode = MODELLING;
-        transformMode = NONE;
-        printCurrentMode();
-        return;
+        std::cout << "Mode: MODELLING" << std::endl;
     }
-    
-    if (key == GLFW_KEY_I) {
+    else if (key == GLFW_KEY_I) {
         currentMode = INSPECTION;
-        transformMode = NONE;
-        printCurrentMode();
-        return;
+        std::cout << "Mode: INSPECTION" << std::endl;
     }
+    else if (key == GLFW_KEY_W ){
+    Wireframe = !Wireframe;
     
-    // Handle transform mode keys first (common to both modes)
-    if (transformMode != NONE) {
-        handleTransformMode(key);
-        return;
+   if (Wireframe){
+      glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);}
+   else
+   {
+      glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+   }}
+    else if (key == GLFW_KEY_ESCAPE) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
-    
-    // Mode-specific handling
+
     if (currentMode == MODELLING) {
-        handleModellingMode(key);
+        handleModellingKeys(key);
     } else if (currentMode == INSPECTION) {
-        handleInspectionMode(key);
+        handleInspectionKeys(key);
     }
 }
 
-void handleModellingMode(int key) {
+void handleModellingKeys(int key) {
     switch (key) {
-        case GLFW_KEY_1:
-            addShape(SPHERE_SHAPE);
+        
+
+        case GLFW_KEY_U: // Move UP to parent
+            if (currentNode->parent.lock()) {
+                currentNode = currentNode->parent.lock();
+                std::cout << "Selected parent node.\n";
+            } else {
+                std::cout << "Already at the root node.\n";
+            }
             break;
-        case GLFW_KEY_2:
-            addShape(CYLINDER_SHAPE);
+        case GLFW_KEY_J: // Move DOWN to first child
+            if (!currentNode->children.empty()) {
+                currentNode = currentNode->children.front();
+                std::cout << "Selected first child node.\n";
+            } else {
+                std::cout << "Selected node has no children.\n";
+            }
             break;
-        case GLFW_KEY_3:
-            addShape(BOX_SHAPE);
-            break;
-        case GLFW_KEY_4:
-            addShape(CONE_SHAPE);
-            break;
-        case GLFW_KEY_5:
-            removeLastShape();
-            break;
+        // Transform mode selection
         case GLFW_KEY_R:
-            activateRotationMode();
+            transformMode = ROTATE;
+            std::cout << "Transform mode: ROTATE\n";
             break;
         case GLFW_KEY_T:
-            activateTranslationMode();
+            transformMode = TRANSLATE;
+            std::cout << "Transform mode: TRANSLATE\n";
             break;
         case GLFW_KEY_G:
-            activateScalingMode();
+            transformMode = SCALE;
+            std::cout << "Transform mode: SCALE\n";
             break;
-        case GLFW_KEY_C:
-            changeShapeColor();
-            break;
-        case GLFW_KEY_S:
-            saveModel();
-            break;
-    }
-}
+        
 
-void handleInspectionMode(int key) {
-    switch (key) {
-        case GLFW_KEY_L:
-            loadModel();
-            break;
-        case GLFW_KEY_R:
-            activateRotationMode();
-            break;
-    }
-}
-
-void handleTransformMode(int key) {
-    switch (key) {
+        // Axis selection
         case GLFW_KEY_X:
-            chooseAxis('X');
+            activeAxis = 'X';
+            std::cout << "Active Axis: X\n";
             break;
         case GLFW_KEY_Y:
-            chooseAxis('Y');
+            activeAxis = 'Y';
+            std::cout << "Active Axis: Y\n";
             break;
         case GLFW_KEY_Z:
-            chooseAxis('Z');
+            activeAxis = 'Z';
+            std::cout << "Active Axis: Z\n";
             break;
-        case GLFW_KEY_EQUAL: // '+' key
-            applyTransformation(true);
+
+        // Apply transformations
+        case GLFW_KEY_KP_ADD:
+        case GLFW_KEY_EQUAL:
+            applyTransform(+1);
             break;
-        case GLFW_KEY_MINUS: // '-' key
-            applyTransformation(false);
+        case GLFW_KEY_KP_SUBTRACT:
+        case GLFW_KEY_MINUS:
+            applyTransform(-1);
             break;
-        case GLFW_KEY_ENTER:
-        case GLFW_KEY_SPACE:
-            transformMode = NONE;
-            std::cout << "Transform mode deactivated" << std::endl;
+
+        // Change color
+        case GLFW_KEY_C: {
+            float r, g, b;
+            std::cout << "Enter RGB values (0-1): ";
+            std::cin >> r >> g >> b;
+            if (currentNode && currentNode->shape) {
+                currentNode->shape->setColor(glm::vec4(r, g, b, 1.0f));
+            }
             break;
+        }
+         case GLFW_KEY_A:
+            tesselationMode = !tesselationMode;
+            if (tesselationMode) {
+                std::cout << "=== TESSELLATION MODE ACTIVATED ===" << std::endl;
+                std::cout << "Press number keys 1-6 to set tessellation level" << std::endl;
+                std::cout << "Press A again to exit tessellation mode" << std::endl;
+                if (currentNode && currentNode->shape) {
+                    std::cout << "Current tessellation level: " << currentNode->shape->getLevel() << std::endl;
+                    std::cout << "Current triangle count: " << currentNode->shape->indices.size() / 3 << std::endl;
+                } else {
+                    std::cout << "No shape selected!" << std::endl;
+                }
+            } else {
+                std::cout << "=== TESSELLATION MODE DEACTIVATED ===" << std::endl;
+            }
+            break;
+        
+    // Add shapes
+        case GLFW_KEY_1:
+          if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(1);
+            } else if (!tesselationMode) {
+            currentModel->addShape(std::make_unique<sphere_t>(1));
+            currentNode = currentModel->getLastNode();
+            std::cout << "Sphere added\n";}
+            break;
+        case GLFW_KEY_2:
+          if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(2);
+            } else if (!tesselationMode) {
+            currentModel->addShape(std::make_unique<cylinder_t>(1));
+            currentNode = currentModel->getLastNode();
+            std::cout << "Cylinder added\n";}
+            break;
+        case GLFW_KEY_3:
+         if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(3);
+            } else if (!tesselationMode) {
+            currentModel->addShape(std::make_unique<box_t>(1));
+            currentNode = currentModel->getLastNode();
+            std::cout << "Box added\n";}
+            break;
+        case GLFW_KEY_4:
+          if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(4);
+            } else if (!tesselationMode) {
+            currentModel->addShape(std::make_unique<cone_t>(1));
+            currentNode = currentModel->getLastNode();
+            std::cout << "Cone added\n";}
+            break;
+        case GLFW_KEY_5:
+         if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(5);
+            } else if (!tesselationMode) {
+            currentModel->removeLastShape();
+            currentNode = currentModel->getLastNode();
+            std::cout << "Last shape removed\n";}
+            break;
+        case GLFW_KEY_6:
+            if (tesselationMode && currentNode && currentNode->shape) {
+                currentNode->shape->setLevel(6);
+            }
+            break;   
+        // Save model
+        case GLFW_KEY_S: {
+            
+            std::string filename;
+            std::cout << "Enter filename (with .mod extension): ";
+            std::cin >> filename;
+            if (filename.find(".mod") == std::string::npos) {
+                filename += ".mod";
+            }
+            currentModel->save(filename);
+            break;
+        }
     }
 }
 
-void printCurrentMode() {
-    if (currentMode == MODELLING) {
-        std::cout << "Current Mode: MODELLING" << std::endl;
-        std::cout << "Controls: 1-4 (add shapes), 5 (remove), R (rotate), T (translate), G (scale), C (color), S (save)" << std::endl;
-    } else {
-        std::cout << "Current Mode: INSPECTION" << std::endl;
-        std::cout << "Controls: L (load), R (rotate model)" << std::endl;
-    }
-}
-
-void addShape(ShapeType type) {
-    if (!currentModel) return;
-    
-    std::shared_ptr<shape_t> newShape;
-    unsigned int defaultLevel = 2; // Medium tesselation
-    
-    switch (type) {
-        case SPHERE_SHAPE:
-            newShape = std::make_shared<sphere_t>(defaultLevel);
-            std::cout << "Added sphere" << std::endl;
+void handleInspectionKeys(int key) {
+    switch (key) {
+        // Load model
+        case GLFW_KEY_L: {
+            std::string filename;
+            std::cout << "Enter filename to load: ";
+            std::cin >> filename;
+            if (currentModel->load(filename)) {
+                currentNode = currentModel->getLastNode();
+                // Reset camera to view loaded model
+                cameraDistance = 5.0f;
+                cameraAngleX = 0.0f;
+                cameraAngleY = 0.0f;
+                modelRotation = glm::mat4(1.0f);
+            }
             break;
-        case CYLINDER_SHAPE:
-            newShape = std::make_shared<cylinder_t>(defaultLevel);
-            std::cout << "Added cylinder" << std::endl;
-            break;
-        case BOX_SHAPE:
-            newShape = std::make_shared<box_t>(defaultLevel);
-            std::cout << "Added box" << std::endl;
-            break;
-        case CONE_SHAPE:
-            newShape = std::make_shared<cone_t>(defaultLevel);
-            std::cout << "Added cone" << std::endl;
-            break;
-    }
-    
-    currentModel->addShape(newShape);
-}
-
-void removeLastShape() {
-    if (!currentModel) return;
-    
-    currentModel->removeLastShape();
-    std::cout << "Removed last shape" << std::endl;
-}
-
-void activateRotationMode() {
-    transformMode = ROTATION;
-    currentAxis = 'X'; // Default axis
-    std::cout << "Rotation mode activated. Choose axis (X/Y/Z), then use +/- to rotate" << std::endl;
-}
-
-void activateTranslationMode() {
-    if (currentMode != MODELLING) return;
-    
-    transformMode = TRANSLATION;
-    currentAxis = 'X'; // Default axis
-    std::cout << "Translation mode activated. Choose axis (X/Y/Z), then use +/- to translate" << std::endl;
-}
-
-void activateScalingMode() {
-    if (currentMode != MODELLING) return;
-    
-    transformMode = SCALING;
-    currentAxis = 'X'; // Default axis
-    std::cout << "Scaling mode activated. Choose axis (X/Y/Z), then use +/- to scale" << std::endl;
-}
-
-void chooseAxis(char axis) {
-    currentAxis = axis;
-    std::cout << "Selected axis: " << axis << std::endl;
-}
-
-void applyTransformation(bool positive) {
-    if (!currentModel) return;
-    
-    if (currentMode == MODELLING) {
-        auto currentShape = currentModel->getCurrentShape();
-        if (!currentShape || !currentShape->shape) {
-            std::cout << "No shape selected" << std::endl;
-            return;
         }
         
-        switch (transformMode) {
-            case ROTATION:
-                currentShape->shape->rotate(currentAxis, positive);
-                std::cout << "Rotated shape around " << currentAxis << " axis" << std::endl;
-                break;
-            case TRANSLATION:
-                currentShape->shape->translate(currentAxis, positive);
-                std::cout << "Translated shape along " << currentAxis << " axis" << std::endl;
-                break;
-            case SCALING:
-                currentShape->shape->scale(currentAxis, positive);
-                std::cout << "Scaled shape along " << currentAxis << " axis" << std::endl;
-                break;
-            default:
-                break;
-        }
-    } else if (currentMode == INSPECTION && transformMode == ROTATION) {
-        currentModel->rotateModel(currentAxis, positive);
-        std::cout << "Rotated entire model around " << currentAxis << " axis" << std::endl;
-    }
-}
-
-void changeShapeColor() {
-    if (currentMode != MODELLING || !currentModel) return;
-    
-    auto currentShape = currentModel->getCurrentShape();
-    if (!currentShape || !currentShape->shape) {
-        std::cout << "No shape selected" << std::endl;
-        return;
-    }
-    
-    float r, g, b;
-    std::cout << "Enter RGB color values (0.0 - 1.0):" << std::endl;
-    std::cout << "Red: ";
-    std::cin >> r;
-    std::cout << "Green: ";
-    std::cin >> g;
-    std::cout << "Blue: ";
-    std::cin >> b;
-    
-    // Clamp values
-    r = std::max(0.0f, std::min(1.0f, r));
-    g = std::max(0.0f, std::min(1.0f, g));
-    b = std::max(0.0f, std::min(1.0f, b));
-    
-    currentShape->shape->setColor(glm::vec4(r, g, b, 1.0f));
-    std::cout << "Color changed to RGB(" << r << ", " << g << ", " << b << ")" << std::endl;
-}
-
-void saveModel() {
-    if (currentMode != MODELLING || !currentModel) return;
-    
-    std::string filename;
-    std::cout << "Enter filename (without extension): ";
-    std::cin >> filename;
-    filename += ".mod";
-    
-    try {
-        currentModel->saveToFile(filename);
-        std::cout << "Model saved to " << filename << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Error saving model: " << e.what() << std::endl;
-    }
-}
-
-void loadModel() {
-    if (currentMode != INSPECTION || !currentModel) return;
-    
-    std::string filename;
-    std::cout << "Enter model filename: ";
-    std::cin >> filename;
-    
-    try {
-        currentModel->loadFromFile(filename);
-        std::cout << "Model loaded from " << filename << std::endl;
-        
-        // Position camera to view entire model
-        glm::vec3 modelCentroid = currentModel->getModelCentroid();
-        // Here you would adjust camera position based on modelCentroid
-        // This requires your camera/view matrix setup
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error loading model: " << e.what() << std::endl;
-    }
-}
-
-void render() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    if (currentModel) {
-        currentModel->draw();
-    }
-    
-    // Additional rendering code would go here
-    // (setting up view/projection matrices, shader uniforms, etc.)
-}
-
-void cleanup() {
-    if (currentModel) {
-        currentModel->clear();
-        currentModel.reset();
-    }
-    
-    glfwTerminate();
-    std::cout << "Application cleaned up successfully" << std::endl;
-}
+        // Model rotation mode
+        case GLFW_KEY_R:
+            transformMode = ROTATE;
+            std::cout << "Model rotation mode activated\n";
+            break;
+            
+        // Axis selection for model rotation
+        case GLFW_KEY_X:
+            activeAxis = 'X';
+            std::cout << "Model rotation axis: X\n";
+            break;
+        case GLFW_KEY_Y:
+            activeAxis = 'Y';
+            std::cout << "Model rotation axis: Y\n";
+            break;
+        case GLFW_KEY_Z:
+            activeAxis = 'Z';
+            std::cout << "Model rotation axis: Z\n";
+            break;
+            
+        // Apply model rotation
+        case GLFW_KEY_KP_ADD:
+        case GLFW_KEY_EQUAL:
+            if (transformMode == ROTATE) {
+                float angle = glm::radians(5.0f);
+                switch (activeAxis) {
+                    case 'X': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(1, 0, 0)); break;
+                    case 'Y': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(0, 1, 0)); break;
+                    case 'Z': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(0, 0, 1)); break;
+                }
+            }
+            break;
+        case GLFW_KEY_KP_SUBTRACT:
+        case GLFW_KEY_MINUS:
+            if (transformMode == ROTATE) {
+                float angle = glm::radians(-5.0f);
+                switch (activeAxis) {
+                    case 'X': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(1, 0, 0)); break;
+                    case 'Y': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(0, 1, 0)); break;
+                    case 'Z': modelRotation = glm::rotate(modelRotation, angle, glm::vec3(0, 0, 1)); break;
+                }
+            }
+            break;}}

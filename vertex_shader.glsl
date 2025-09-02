@@ -1,14 +1,12 @@
 #version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec4 aColor;
 
-layout(location = 0) in vec4 aPos;    // vertex position (from VBO)
-layout(location = 1) in vec4 aColor;  // vertex color (from VBO)
-
-out vec4 vColor;   // passed to fragment shader
-
-uniform mat4 uMVP; // Model-View-Projection matrix
+out vec4 vColor;
+uniform mat4 MVP;
 
 void main()
 {
-    gl_Position = uMVP * aPos;
+    gl_Position = MVP * vec4(aPos, 1.0);
     vColor = aColor;
 }
