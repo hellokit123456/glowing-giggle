@@ -5,7 +5,6 @@
 #include <unordered_map>
 #include <iostream>
 
-// --- model_node_t Method Definitions ---
 
 model_node_t::model_node_t(std::shared_ptr<shape_t> s, ShapeType t)
     : id(next_id++), shape(std::move(s)), type(t) {}
@@ -19,7 +18,7 @@ glm::mat4 model_node_t::getTransform() const {
     return translation * rotation * scale;
 }
 
-// --- model_t Method Definitions ---
+// model_t Method Definitions
 
 model_t::model_t() {
     // Create a single root node for the scene
