@@ -51,7 +51,6 @@ public:
             VAO = VBO = CBO = EBO = 0; // force GPU buffer update
         }}
     virtual void setColor(const glm::vec4& c) {
-        // Ensure color array matches vertices
         if (vertices.empty()) {
             colors.assign(1, c);
         } else {
@@ -67,7 +66,7 @@ public:
     }
 
     void setupBuffers() {
-        if (VAO != 0) return; // Already initialized
+        if (VAO != 0) return;  
 
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);
@@ -84,7 +83,7 @@ public:
 
         // Ensure colors exist
         if (colors.empty()) {
-            colors.assign(vertices.size(), glm::vec4(1.0f)); // default white
+            colors.assign(vertices.size(), glm::vec4(1.0f)); 
         }
 
         // Vertex colors
@@ -128,11 +127,11 @@ public:
     void changeTesselation(int delta) {
         int newLevel = static_cast<int>(level) + delta;
         if (newLevel < 1) newLevel = 1;
-        if (newLevel > 6) newLevel = 6;  // Match constructor limit
+        if (newLevel > 6) newLevel = 6;  
         setLevel(static_cast<unsigned int>(newLevel));
     }
 };
-// SphereS
+// Sphere
 class sphere_t : public shape_t {
 public:
     sphere_t(unsigned int tesselation_level = 1) : shape_t(tesselation_level) {
@@ -218,7 +217,7 @@ public:
             indices.push_back(v2);
         }
 
-        // --- Base (fan) ---
+        // Base (fan) 
         for (unsigned int i = 0; i < slices; ++i) {
             unsigned int center = 1;
             unsigned int v1 = 2 + i;
@@ -230,41 +229,6 @@ public:
     }
 }};
 
-// Box
-/*class box_t : public shape_t {
-public:
-
-    box_t(unsigned int tesselation_level = 1) : shape_t(tesselation_level) {
-        shapetype = BOX_SHAPE;
-    }
-
-    void generateGeometry() override {
-        vertices.clear();
-        colors.clear();
-        indices.clear();
-
-        glm::vec4 v[] = {
-            {-1,-1,-1,1}, {1,-1,-1,1}, {1,1,-1,1}, {-1,1,-1,1},
-            {-1,-1, 1,1}, {1,-1, 1,1}, {1,1, 1,1}, {-1,1, 1,1}
-        };
-
-        for (int i = 0; i < 8; i++) {
-            vertices.push_back(v[i]);
-            colors.emplace_back((i&1)?1:0, (i&2)?1:0, (i&4)?1:0, 1);
-        }
-
-        unsigned int idx[] = {
-            0,1,2, 2,3,0,  // back
-            4,5,6, 6,7,4,  // front
-            0,4,7, 7,3,0,  // left
-            1,5,6, 6,2,1,  // right
-            3,2,6, 6,7,3,  // top
-            0,1,5, 5,4,0   // bottom
-        };
-        indices.assign(idx, idx+36);
-    }
-};
-*/
 class box_t : public shape_t {
 public:
     box_t(unsigned int tesselation_level = 1) : shape_t(tesselation_level) {
@@ -278,8 +242,6 @@ public:
 
         unsigned int n = level; // tesselation subdivisions per edge
         if (n < 1) n = 1;
-
-        // Each face spans from -1 to 1 in both axes
         auto addFace = [&](glm::vec3 origin, glm::vec3 uDir, glm::vec3 vDir) {
             unsigned int startIndex = vertices.size();
 
@@ -337,7 +299,6 @@ public:
         std::cout << "Tesselation level: " << level << std::endl;
         std::cout << "Slices: " << slices << std::endl;
         
-        // Generate vertices (this part is correct)
         for (unsigned int i = 0; i <= slices; ++i) {
             float theta = 2.0f * glm::pi<float>() * i / slices;
             float x = cos(theta);
