@@ -14,7 +14,7 @@ extern Mode currentMode;
 extern TransformMode transformMode;
 extern char activeAxis;
 struct model_node_t;
-struct model_t; // forward declare
+struct model_t; 
 extern std::shared_ptr<model_t> currentModel;
 extern std::shared_ptr<model_node_t> currentNode;
 
