@@ -1,6 +1,6 @@
-#include <GL/glew.h>     // MUST come first
-#include <GLFW/glfw3.h>  // then GLFW
-#include <glm/glm.hpp>   // then GLM
+#include <GL/glew.h>     
+#include <GLFW/glfw3.h>  
+#include <glm/glm.hpp>   
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -14,7 +14,7 @@ bool Wireframe = false;
 bool tesselationMode = false;
 shape_t* getCurrentShape() {
     if (currentNode && currentNode->shape) {
-        return currentNode->shape.get();  // unique_ptr → raw pointer
+        return currentNode->shape.get();  // unique_ptr -> raw pointer
     }
     return nullptr;
 }
@@ -153,10 +153,11 @@ void handleModellingKeys(int key) {
             }
             break;
         }
+        //Tesselation implementation
          case GLFW_KEY_A:
             tesselationMode = !tesselationMode;
             if (tesselationMode) {
-                std::cout << "=== TESSELLATION MODE ACTIVATED ===" << std::endl;
+                std::cout << "TESSELLATION MODE ACTIVATED " << std::endl;
                 std::cout << "Press number keys 1-6 to set tessellation level" << std::endl;
                 std::cout << "Press A again to exit tessellation mode" << std::endl;
                 if (currentNode && currentNode->shape) {
@@ -166,7 +167,7 @@ void handleModellingKeys(int key) {
                     std::cout << "No shape selected!" << std::endl;
                 }
             } else {
-                std::cout << "=== TESSELLATION MODE DEACTIVATED ===" << std::endl;
+                std::cout << "TESSELLATION MODE DEACTIVATED " << std::endl;
             }
             break;
         
