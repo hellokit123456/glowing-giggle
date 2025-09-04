@@ -56,7 +56,7 @@ public:
     std::shared_ptr<model_node_t> getCurrentShape();
     std::shared_ptr<model_node_t> getLastNode();
     void rotateModel(char axis, bool positive);
-    void render(); // Note: render() is defined in HIERARCHIAL_NODE.cpp but not used by main.cpp
+    void render(); 
     size_t getShapeCount() const;
     void clear();
     void save(const std::string& filename);
