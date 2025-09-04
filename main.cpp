@@ -1,5 +1,5 @@
-#include <GL/glew.h>     // MUST come first
-#include <GLFW/glfw3.h>  // then GLFW
+#include <GL/glew.h>     
+#include <GLFW/glfw3.h>  
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -12,8 +12,7 @@
 #include "globals.h"
 #include "HIERARCHIAL.h"
 
-// --- Global Variable DEFINITIONS ---
-// These were previously missing
+
 glm::mat4 projection;
 glm::mat4 view;
 GLuint shaderProgram = 0;
@@ -28,7 +27,7 @@ float cameraAngleY = 0.0f;
 glm::mat4 modelRotation = glm::mat4(1.0f);
 
 
-// --- Shader Creation ---
+// Shader Creation
 GLuint createShaderProgram() {
     const char* vertexShaderSrc = R"(
     #version 330 core
@@ -69,7 +68,7 @@ GLuint createShaderProgram() {
 }
 
 
-// --- Rendering Logic ---
+// Rendering Logic
 void renderNode(std::shared_ptr<model_node_t> node, const glm::mat4& parentTransform) {
     if (!node) return;
     glm::mat4 modelMatrix = parentTransform * node->getTransform();
@@ -111,7 +110,7 @@ void renderScene() {
 }
 
 
-// --- Main Application ---
+// Main Application
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW\n";
@@ -163,4 +162,5 @@ int main() {
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
+
 }
